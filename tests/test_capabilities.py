@@ -538,6 +538,9 @@ def test_live_verification_distinguishes_supported_cloud_actions_from_limited_co
         "cloud_disk.recycle.restore",
         "cloud_disk.recycle.items.delete",
         "cloud_disk.recycle.empty",
+        "homework.question.add",
+        "homework.question.update",
+        "homework.draft.update",
     ):
         assert ACTION_BY_NAME[name].live_verified is True
     assert ACTION_BY_NAME["resources.copy"].live_verified is False
