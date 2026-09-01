@@ -50,6 +50,14 @@ def test_learning_cli_parses_semantic_read_commands() -> None:
     ai_tools = build_parser().parse_args(["learning-ai-tools", "英语文体与写作"])
     wrong = build_parser().parse_args(["learning-wrong-questions", "英语文体与写作"])
     records = build_parser().parse_args(["learning-records", "英语文体与写作"])
+    graph = build_parser().parse_args(
+        ["learning-graph", "英语文体与写作", "--search", "写作", "--level", "2"]
+    )
+    graph_node = build_parser().parse_args(["learning-graph-node", "英语文体与写作", "Punctuation"])
+    graph_models = build_parser().parse_args(
+        ["learning-graph-models", "英语文体与写作", "--search", "知识"]
+    )
+    graph_model = build_parser().parse_args(["learning-graph-model", "英语文体与写作", "知识图谱"])
 
     assert activities.status == "ended" and activities.search == "讨论"
     assert chapters.search == "1.1"
@@ -61,6 +69,10 @@ def test_learning_cli_parses_semantic_read_commands() -> None:
     assert ai_tools.command == "learning-ai-tools"
     assert wrong.command == "learning-wrong-questions"
     assert records.command == "learning-records"
+    assert graph.search == "写作" and graph.level == 2
+    assert graph_node.node == "Punctuation"
+    assert graph_models.search == "知识"
+    assert graph_model.model == "知识图谱"
 
 
 def test_job_ability_cli_parses_search_catalog_and_industry_commands() -> None:

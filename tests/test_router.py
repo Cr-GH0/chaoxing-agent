@@ -501,6 +501,10 @@ def test_route_learning_course_semantic_reads() -> None:
     ai_tools = route_command("查看我学课程《英语文体与写作》的AI助教工具")
     wrong = route_command("查看我学课程《英语文体与写作》的错题集概况")
     records = route_command("读取我学课程《英语文体与写作》的学习记录")
+    graph = route_command("查看我学课程《英语文体与写作》的第2层课程图谱")
+    graph_node = route_command("读取我学课程《英语文体与写作》的图谱节点《Punctuation》")
+    graph_models = route_command("列出我学课程《英语文体与写作》的图谱模型")
+    graph_model = route_command("读取我学课程《英语文体与写作》的图谱模型《知识图谱》")
 
     assert activities.action == "learning.course.activities.list"
     assert activities.parameters["status"] == "ended"
@@ -517,6 +521,13 @@ def test_route_learning_course_semantic_reads() -> None:
     assert ai_tools.action == "learning.course.ai_tools.list"
     assert wrong.action == "learning.course.wrong_questions.summary"
     assert records.action == "learning.course.records.read"
+    assert graph.action == "learning.course.knowledge_graph.list"
+    assert graph.parameters["level"] == 2
+    assert graph_node.action == "learning.course.knowledge_graph.node.read"
+    assert graph_node.parameters["node"] == "Punctuation"
+    assert graph_models.action == "learning.course.knowledge_graph.models.list"
+    assert graph_model.action == "learning.course.knowledge_graph.model.read"
+    assert graph_model.parameters["model"] == "知识图谱"
 
 
 def test_route_course_classes_with_quoted_course() -> None:

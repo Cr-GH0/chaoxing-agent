@@ -768,6 +768,101 @@ def test_learning_discussion_class_search_filters_locally(monkeypatch) -> None:
     assert [topic["title"] for topic in result["topics"]] == ["Environmental issue"]
 
 
+def test_learning_knowledge_graph_reads_hide_bootstrap_tokens(monkeypatch) -> None:
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    course = {
+        "course_id": "254641935",
+        "course_name": "英语文体与写作",
+        "clazz_id": "125867890",
+        "cpi": "485781386",
+    }
+    context = {
+        "session": object(),
+        "common": {
+            "courseid": course["course_id"],
+            "clazzid": course["clazz_id"],
+            "cpi": course["cpi"],
+            "ut": "s",
+            "enc": "secret-bootstrap-token",
+        },
+        "referer": "https://example.test/graph?enc=secret-bootstrap-token",
+    }
+    config = {
+        "status": True,
+        "dataJson": {
+            "exportCourseTopicEnc": "secret-export-token",
+            "relationTypeDesc": [
+                {
+                    "relationDescId": "1",
+                    "relationDescName": "父子",
+                    "bootstrapToken": "secret-relation-token",
+                }
+            ],
+        },
+        "topicClassifyArray": [],
+        "graphLabelShow": [],
+        "showSetData": {},
+    }
+    raw_graph = {
+        "status": True,
+        "nodes": [
+            {"id": "courseid-1", "name": "课程", "bootstrap": "secret-node-token"},
+            {"id": "101", "topicid": "101", "name": "Punctuation"},
+        ],
+        "links": [
+            {
+                "source": "courseid-1",
+                "target": "101",
+                "type": 1,
+                "token": "secret-link-token",
+            }
+        ],
+    }
+    model_settings = {
+        "topicModelData": [
+            {
+                "id": "458578",
+                "name": "知识图谱",
+                "modeType": 1,
+                "bootstrap": "secret-model-token",
+            }
+        ]
+    }
+    monkeypatch.setattr(api, "_learning_knowledge_graph_context", lambda _course: context)
+    monkeypatch.setattr(api, "_knowledge_graph_config_data", lambda _context: config)
+    monkeypatch.setattr(api, "_knowledge_graph_raw_data", lambda _context: raw_graph)
+    monkeypatch.setattr(
+        api,
+        "_knowledge_graph_topic_setting_data",
+        lambda _context: model_settings,
+    )
+    monkeypatch.setattr(
+        api,
+        "_knowledge_graph_json_request",
+        lambda *_args, **_kwargs: {
+            "status": True,
+            "data": {
+                "id": "root",
+                "name": "课程",
+                "token": "secret-model-data-token",
+                "children": [{"topicId": "101", "name": "Punctuation"}],
+            },
+        },
+    )
+
+    graph = api.list_learning_knowledge_graph(course)
+    node = api.read_learning_knowledge_graph_node(course, "Punctuation")
+    models = api.list_learning_knowledge_graph_models(course)
+    model = api.read_learning_knowledge_graph_model(course, "知识图谱")
+
+    assert graph["total_count"] == 2 and graph["relation_count"] == 1
+    assert node["node"]["node_id"] == "101"
+    assert models["models"][0]["model_id"] == "458578"
+    assert model["count"] == 2
+    assert "raw" not in graph["nodes"][0]
+    assert "secret" not in str((graph, node, models, model))
+
+
 def test_resolve_class_defaults_to_first() -> None:
     course = parse_teaching_courses(sample_payload())[0]
     assert resolve_class(course)["clazz_id"] == "800000001"

@@ -2834,6 +2834,55 @@ async def chaoxing_read_learning_records(course: str) -> dict[str, Any]:
 
 
 @mcp.tool()
+async def chaoxing_read_learning_knowledge_graph(
+    course: str,
+    search: str = "",
+    level: int | None = None,
+) -> dict[str, Any]:
+    """Read learner-visible graph nodes, relations, classifications, and display data."""
+    return await runtime.execute(
+        "learning.course.knowledge_graph.list",
+        {"course": course, "search": search, "level": level},
+    )
+
+
+@mcp.tool()
+async def chaoxing_read_learning_knowledge_graph_node(
+    course: str,
+    node: str,
+) -> dict[str, Any]:
+    """Read one learner-visible graph node by ID, name, or path."""
+    return await runtime.execute(
+        "learning.course.knowledge_graph.node.read",
+        {"course": course, "node": node},
+    )
+
+
+@mcp.tool()
+async def chaoxing_list_learning_knowledge_graph_models(
+    course: str,
+    search: str = "",
+) -> dict[str, Any]:
+    """List graph models currently visible to a learner in one course."""
+    return await runtime.execute(
+        "learning.course.knowledge_graph.models.list",
+        {"course": course, "search": search},
+    )
+
+
+@mcp.tool()
+async def chaoxing_read_learning_knowledge_graph_model(
+    course: str,
+    model: str,
+) -> dict[str, Any]:
+    """Read the hierarchy for one learner-visible course-graph model."""
+    return await runtime.execute(
+        "learning.course.knowledge_graph.model.read",
+        {"course": course, "model": model},
+    )
+
+
+@mcp.tool()
 async def chaoxing_read_learning_integrity(course: str) -> dict[str, Any]:
     """Read whether a joined course currently requires integrity acceptance."""
     return await runtime.execute(

@@ -20009,6 +20009,42 @@ class ChaoxingAPI:
             raise ChaoxingAPIError(f"{operation} returned invalid JSON")
         return payload
 
+    def _learning_knowledge_graph_context(self, course: dict[str, Any]) -> dict[str, Any]:
+        module = self._learning_module_response(course, "课程图谱")
+        query = {
+            key.casefold(): values[0]
+            for key, values in parse_qs(urlparse(str(module["request_url"])).query).items()
+            if values
+        }
+
+        def value(name: str, fallback: Any = "") -> str:
+            return str(query.get(name.casefold()) or fallback or "").strip()
+
+        common = {
+            "courseid": value("courseid", course.get("course_id")),
+            "clazzid": value("clazzid", course.get("clazz_id")),
+            "cpi": value("cpi", course.get("cpi")),
+            "ut": value("ut", "s"),
+            "enc": value("enc"),
+            "stuenc": value("stuenc"),
+            "openType": value("opentype", "1"),
+        }
+        if not all(common[key] for key in ("courseid", "clazzid", "cpi")):
+            raise ChaoxingAPIError("learner course graph did not expose courseid, clazzid, and cpi")
+        return {
+            "session": module["session"],
+            "common": common,
+            "referer": str(module["response"].url),
+        }
+
+    @staticmethod
+    def _learning_graph_public_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            {key: value for key, value in item.items() if key != "raw"}
+            for item in items
+            if isinstance(item, dict)
+        ]
+
     def list_learning_activities(
         self,
         course: dict[str, Any],
@@ -20426,6 +20462,131 @@ class ChaoxingAPI:
             "available_sections": sorted(payloads),
             "unavailable_sections": unavailable,
             "verification": "learner record metrics read from current statistic endpoints",
+        }
+
+    def list_learning_knowledge_graph(
+        self,
+        course: dict[str, Any],
+        *,
+        search: str = "",
+        level: int | None = None,
+    ) -> dict[str, Any]:
+        context = self._learning_knowledge_graph_context(course)
+        config = self._knowledge_graph_config_data(context)
+        graph = self._normalize_knowledge_graph(self._knowledge_graph_raw_data(context))
+        nodes = graph["nodes"]
+        normalized_search = str(search or "").strip().casefold()
+        if normalized_search:
+            nodes = [
+                item
+                for item in nodes
+                if normalized_search in str(item.get("name") or "").casefold()
+                or normalized_search in str(item.get("path") or "").casefold()
+            ]
+        if level is not None:
+            nodes = [item for item in nodes if item.get("level") == int(level)]
+        relation_types = self._normalize_knowledge_graph_relation_types(config)
+        return {
+            **self._learning_course_result(course),
+            "search": search,
+            "level_filter": level,
+            "count": len(nodes),
+            "total_count": len(graph["nodes"]),
+            "relation_count": len(graph["relations"]),
+            "nodes": self._learning_graph_public_items(nodes),
+            "relations": self._learning_graph_public_items(graph["relations"]),
+            "relation_types": self._learning_graph_public_items(relation_types),
+            "topic_classifications": config.get("topicClassifyArray", []),
+            "graph_labels": config.get("graphLabelShow", []),
+            "show_settings": config.get("showSetData", {}),
+            "lineament": graph["lineament"],
+            "node_styles": graph["node_styles"],
+            "shadings": graph["shadings"],
+            "verification": "learner graph configuration and data read through HTTP",
+        }
+
+    def read_learning_knowledge_graph_node(
+        self,
+        course: dict[str, Any],
+        node: str,
+    ) -> dict[str, Any]:
+        context = self._learning_knowledge_graph_context(course)
+        graph = self._normalize_knowledge_graph(self._knowledge_graph_raw_data(context))
+        selected = self._resolve_knowledge_graph_node(graph["nodes"], node, allow_root=True)
+        related = [
+            relation
+            for relation in graph["relations"]
+            if selected["node_id"] in {relation["source_id"], relation["target_id"]}
+        ]
+        return {
+            **self._learning_course_result(course),
+            "node": self._learning_graph_public_items([selected])[0],
+            "relations": self._learning_graph_public_items(related),
+            "verification": "learner graph node and incident relations refreshed through HTTP",
+        }
+
+    def list_learning_knowledge_graph_models(
+        self,
+        course: dict[str, Any],
+        *,
+        search: str = "",
+    ) -> dict[str, Any]:
+        context = self._learning_knowledge_graph_context(course)
+        models = self._normalize_knowledge_graph_models(
+            self._knowledge_graph_topic_setting_data(context)
+        )
+        normalized_search = str(search or "").strip().casefold()
+        if normalized_search:
+            models = [
+                item
+                for item in models
+                if normalized_search in str(item.get("name") or "").casefold()
+                or normalized_search in str(item.get("mode_name") or "").casefold()
+            ]
+        return {
+            **self._learning_course_result(course),
+            "search": search,
+            "count": len(models),
+            "models": self._learning_graph_public_items(models),
+            "verification": "learner graph models refreshed through HTTP",
+        }
+
+    def read_learning_knowledge_graph_model(
+        self,
+        course: dict[str, Any],
+        model: str,
+    ) -> dict[str, Any]:
+        context = self._learning_knowledge_graph_context(course)
+        selected = self._resolve_knowledge_graph_model(
+            self._normalize_knowledge_graph_models(
+                self._knowledge_graph_topic_setting_data(context)
+            ),
+            model,
+        )
+        config = self._knowledge_graph_config_data(context)
+        data_json = config.get("dataJson") if isinstance(config.get("dataJson"), dict) else {}
+        payload = self._knowledge_graph_json_request(
+            context,
+            "/mooc2-ans/coursetopic/mapmodeldata",
+            "learner knowledge-graph model read",
+            params={
+                "courseid": context["common"]["courseid"],
+                "cpi": context["common"]["cpi"],
+                "clazzid": context["common"]["clazzid"],
+                "topicModelId": selected["model_id"],
+                "view": "json",
+                "enc": str(data_json.get("exportCourseTopicEnc") or ""),
+            },
+        )
+        self._knowledge_graph_ack(payload, "learner knowledge-graph model read")
+        raw = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        normalized = self._normalize_knowledge_graph_model_data(raw)
+        return {
+            **self._learning_course_result(course),
+            "model": self._learning_graph_public_items([selected])[0],
+            "count": normalized["count"],
+            "nodes": self._learning_graph_public_items(normalized["nodes"]),
+            "verification": "learner model-specific graph data refreshed through HTTP",
         }
 
     def list_learning_discussions(

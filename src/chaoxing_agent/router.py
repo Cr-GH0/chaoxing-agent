@@ -899,7 +899,7 @@ def route_command(command: str) -> CommandPlan:
             text,
         )
     )
-    if graph_intent:
+    if graph_intent and not re.search(r"我学的课|我学的课程|我学课程|学生课程", text):
         quoted = _extract_quoted(text)
         base: dict[str, Any] = {"course": quoted[0]} if quoted else {}
         operands = quoted[1:]
@@ -5224,6 +5224,53 @@ def route_command(command: str) -> CommandPlan:
                 confidence=0.98 if quoted else 0.72,
                 missing_fields=[] if quoted else ["course"],
                 message="请用书名号提供要查看学生侧功能入口的课程。" if not quoted else "",
+            )
+        if re.search(r"课程图谱|知识图谱|学习地图|图谱", text):
+            parameters: dict[str, object] = {"course": quoted[0]} if quoted else {}
+            operand = quoted[1] if len(quoted) > 1 else ""
+            if "模型" in text and re.search(r"读取|查看|打开", text) and operand:
+                parameters["model"] = operand
+                return CommandPlan(
+                    text,
+                    "learning.course.knowledge_graph.model.read",
+                    parameters=parameters,
+                    confidence=0.98,
+                )
+            if "模型" in text or re.search(r"图谱(视图|类型)", text):
+                if operand and re.search(r"搜索|查找", text):
+                    parameters["search"] = operand
+                return CommandPlan(
+                    text,
+                    "learning.course.knowledge_graph.models.list",
+                    parameters=parameters,
+                    confidence=0.98 if quoted else 0.72,
+                    missing_fields=[] if quoted else ["course"],
+                    message="请用书名号提供要查看图谱模型的课程。" if not quoted else "",
+                )
+            if re.search(r"节点|知识点", text):
+                if operand:
+                    parameters["node"] = operand
+                missing = ([] if quoted else ["course"]) + ([] if operand else ["node"])
+                return CommandPlan(
+                    text,
+                    "learning.course.knowledge_graph.node.read",
+                    parameters=parameters,
+                    confidence=0.98 if not missing else 0.72,
+                    missing_fields=missing,
+                    message="请依次用书名号提供课程和图谱节点。" if missing else "",
+                )
+            if operand and re.search(r"搜索|查找", text):
+                parameters["search"] = operand
+            level_match = re.search(r"(?:第\s*)?(\d+)\s*层", text)
+            if level_match:
+                parameters["level"] = int(level_match.group(1))
+            return CommandPlan(
+                text,
+                "learning.course.knowledge_graph.list",
+                parameters=parameters,
+                confidence=0.98 if quoted else 0.72,
+                missing_fields=[] if quoted else ["course"],
+                message="请用书名号提供要查看课程图谱的课程。" if not quoted else "",
             )
         if "学习记录" in text or re.search(r"学习(进度|统计)", text):
             parameters = {"course": quoted[0]} if quoted else {}

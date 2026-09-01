@@ -98,6 +98,22 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
             return {"course": course, "records": {"points": 0}}
 
         @staticmethod
+        def list_learning_knowledge_graph(course, **kwargs):
+            return {"course": course, "nodes": [{"name": "写作"}], **kwargs}
+
+        @staticmethod
+        def read_learning_knowledge_graph_node(course, node):
+            return {"course": course, "node": {"name": node}}
+
+        @staticmethod
+        def list_learning_knowledge_graph_models(course, **kwargs):
+            return {"course": course, "models": [{"name": "知识图谱"}], **kwargs}
+
+        @staticmethod
+        def read_learning_knowledge_graph_model(course, model):
+            return {"course": course, "model": {"name": model}}
+
+        @staticmethod
         def read_learning_integrity(course):
             return {"course": course, "commitment": {"required": True}}
 
@@ -144,6 +160,22 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
         "learning.course.wrong_questions.summary", {"course": "英语文体与写作"}
     )
     records = await runtime.execute("learning.course.records.read", {"course": "英语文体与写作"})
+    graph = await runtime.execute(
+        "learning.course.knowledge_graph.list",
+        {"course": "英语文体与写作", "search": "写作", "level": "2"},
+    )
+    graph_node = await runtime.execute(
+        "learning.course.knowledge_graph.node.read",
+        {"course": "英语文体与写作", "node": "Punctuation"},
+    )
+    graph_models = await runtime.execute(
+        "learning.course.knowledge_graph.models.list",
+        {"course": "英语文体与写作", "search": "知识"},
+    )
+    graph_model = await runtime.execute(
+        "learning.course.knowledge_graph.model.read",
+        {"course": "英语文体与写作", "model": "知识图谱"},
+    )
     integrity = await runtime.execute(
         "learning.course.integrity.read", {"course": "英语文体与写作"}
     )
@@ -169,6 +201,10 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
     assert ai_tools["result"]["tools"][0]["name"] == "写作AI助教"
     assert wrong["result"]["summary"]["group_count"] == 0
     assert records["result"]["records"]["points"] == 0
+    assert graph["result"]["level"] == 2 and graph["result"]["search"] == "写作"
+    assert graph_node["result"]["node"]["name"] == "Punctuation"
+    assert graph_models["result"]["models"][0]["name"] == "知识图谱"
+    assert graph_model["result"]["model"]["name"] == "知识图谱"
     assert integrity["result"]["commitment"]["required"] is True
     assert preview["status"] == "confirmation_required"
     assert "签署" in preview["confirmation"]["summary"]

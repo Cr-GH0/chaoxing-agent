@@ -1479,6 +1479,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     learning_records.add_argument("course")
 
+    learning_graph = sub.add_parser(
+        "learning-graph", help="read a learner-visible course graph without opening a browser"
+    )
+    learning_graph.add_argument("course")
+    learning_graph.add_argument("--search", default="")
+    learning_graph.add_argument("--level", type=int)
+
+    learning_graph_node = sub.add_parser(
+        "learning-graph-node", help="read one learner-visible graph node and its relations"
+    )
+    learning_graph_node.add_argument("course")
+    learning_graph_node.add_argument("node")
+
+    learning_graph_models = sub.add_parser(
+        "learning-graph-models", help="list learner-visible graph models"
+    )
+    learning_graph_models.add_argument("course")
+    learning_graph_models.add_argument("--search", default="")
+
+    learning_graph_model = sub.add_parser(
+        "learning-graph-model", help="read one learner-visible graph model"
+    )
+    learning_graph_model.add_argument("course")
+    learning_graph_model.add_argument("model")
+
     learning_integrity = sub.add_parser(
         "learning-integrity", help="read the online-learning integrity commitment status"
     )
@@ -5736,6 +5761,26 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
         return await runtime.execute(
             "learning.course.records.read",
             {"course": args.course},
+        )
+    if args.command == "learning-graph":
+        return await runtime.execute(
+            "learning.course.knowledge_graph.list",
+            {"course": args.course, "search": args.search, "level": args.level},
+        )
+    if args.command == "learning-graph-node":
+        return await runtime.execute(
+            "learning.course.knowledge_graph.node.read",
+            {"course": args.course, "node": args.node},
+        )
+    if args.command == "learning-graph-models":
+        return await runtime.execute(
+            "learning.course.knowledge_graph.models.list",
+            {"course": args.course, "search": args.search},
+        )
+    if args.command == "learning-graph-model":
+        return await runtime.execute(
+            "learning.course.knowledge_graph.model.read",
+            {"course": args.course, "model": args.model},
         )
     if args.command == "learning-integrity":
         return await runtime.execute(

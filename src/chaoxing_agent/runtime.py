@@ -1334,6 +1334,38 @@ class ActionRuntime:
             api = self._api()
             course = api.get_learning_course(self._required(parameters, "course"))
             return api.read_learning_records(course)
+        if action == "learning.course.knowledge_graph.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            level = None
+            if parameters.get("level") is not None:
+                level = self._integer(parameters["level"], "level")
+            return api.list_learning_knowledge_graph(
+                course,
+                search=str(parameters.get("search") or ""),
+                level=level,
+            )
+        if action == "learning.course.knowledge_graph.node.read":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.read_learning_knowledge_graph_node(
+                course,
+                self._required(parameters, "node"),
+            )
+        if action == "learning.course.knowledge_graph.models.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.list_learning_knowledge_graph_models(
+                course,
+                search=str(parameters.get("search") or ""),
+            )
+        if action == "learning.course.knowledge_graph.model.read":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.read_learning_knowledge_graph_model(
+                course,
+                self._required(parameters, "model"),
+            )
         if action == "learning.course.integrity.read":
             api = self._api()
             course = api.get_learning_course(self._required(parameters, "course"))

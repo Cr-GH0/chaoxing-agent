@@ -314,6 +314,10 @@ def test_core_actions_are_implemented() -> None:
         "learning.course.ai_tools.list",
         "learning.course.wrong_questions.summary",
         "learning.course.records.read",
+        "learning.course.knowledge_graph.list",
+        "learning.course.knowledge_graph.node.read",
+        "learning.course.knowledge_graph.models.list",
+        "learning.course.knowledge_graph.model.read",
         "learning.course.integrity.read",
         "learning.course.integrity.accept",
         "course.modules.discover",
@@ -374,7 +378,7 @@ def test_report_keeps_observed_separate_from_implemented() -> None:
     report = capability_report()
     counts = report["summary"]["by_state"]
     assert counts["observed"] == 43
-    assert counts["implemented"] == 545
+    assert counts["implemented"] == 549
 
 
 def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None:
@@ -396,11 +400,10 @@ def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None
     ]
     assert coverage[("learning", "chapters")]["coverage"] == "semantic_actions"
     assert coverage[("learning", "chapters")]["semantic_domains"] == ["learning_chapters"]
-    assert coverage[("learning", "knowledge_graph")]["coverage"] == "generic_entry_only"
-    assert (
-        coverage[("learning", "knowledge_graph")]["fallback_action"]
-        == "learning.course.module.open"
-    )
+    assert coverage[("learning", "knowledge_graph")]["coverage"] == "semantic_actions"
+    assert coverage[("learning", "knowledge_graph")]["semantic_domains"] == [
+        "learning_knowledge_graph"
+    ]
     assert all(
         item["coverage"] == "semantic_actions"
         for item in coverage.values()
@@ -434,6 +437,10 @@ def test_live_verification_distinguishes_supported_cloud_actions_from_limited_co
         "learning.course.ai_tools.list",
         "learning.course.wrong_questions.summary",
         "learning.course.records.read",
+        "learning.course.knowledge_graph.list",
+        "learning.course.knowledge_graph.node.read",
+        "learning.course.knowledge_graph.models.list",
+        "learning.course.knowledge_graph.model.read",
         "learning.course.integrity.read",
         "notes.list",
         "notes.read",
