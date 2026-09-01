@@ -1,0 +1,130 @@
+[
+  {
+    "request": "我教了哪些课程",
+    "domain": "courses",
+    "operation": ["列出"],
+    "keywords": ["我教的课程"],
+    "expected_action": "courses.list_teaching"
+  },
+  {
+    "request": "列出英语写作这门课的班级",
+    "domain": "courses",
+    "operation": ["列出"],
+    "keywords": ["课程班级"],
+    "expected_action": "courses.list_classes"
+  },
+  {
+    "request": "看看英语写作二班还有哪些作业没改",
+    "domain": "homework",
+    "operation": ["列出"],
+    "keywords": ["待批作业", "未批改"],
+    "expected_action": "homework.list_ungraded"
+  },
+  {
+    "request": "查看第二次作业有哪些学生交了",
+    "domain": "homework",
+    "operation": ["列出"],
+    "keywords": ["作业提交"],
+    "expected_action": "homework.submissions.list"
+  },
+  {
+    "request": "看看张三第二次作业写了什么",
+    "domain": "homework",
+    "operation": ["读取"],
+    "keywords": ["学生作答内容"],
+    "expected_action": "homework.submission.read"
+  },
+  {
+    "request": "把张三第二次作业打八十五分",
+    "domain": "homework",
+    "operation": ["打分"],
+    "keywords": ["作业评分"],
+    "expected_action": "homework.score.set"
+  },
+  {
+    "request": "给大学英语一班发通知",
+    "domain": "notices",
+    "operation": ["发送"],
+    "keywords": ["课程通知"],
+    "expected_action": "notices.send"
+  },
+  {
+    "request": "明天早上八点给大学英语一班定时发通知",
+    "domain": "notices",
+    "operation": ["定时发送"],
+    "keywords": ["课程通知"],
+    "expected_action": "notices.schedule"
+  },
+  {
+    "request": "把桌面上的第二单元课件上传到课程资料",
+    "domain": "resources",
+    "operation": ["上传"],
+    "keywords": ["本地课件", "课程资料"],
+    "expected_action": "resources.file.upload"
+  },
+  {
+    "request": "从个人云盘导入第二单元课件",
+    "domain": "course_assets",
+    "operation": ["导入"],
+    "keywords": ["云盘文件", "课件"],
+    "expected_action": "course_assets.cloud_files.import"
+  },
+  {
+    "request": "查看期末考试还有哪些学生没批",
+    "domain": "exams",
+    "operation": ["列出"],
+    "keywords": ["待批考试", "考试提交"],
+    "expected_action": "exams.submissions.list"
+  },
+  {
+    "request": "在题库里搜索虚拟语气",
+    "domain": "question_bank",
+    "operation": ["搜索"],
+    "keywords": ["题库", "虚拟语气"],
+    "expected_action": "question_bank.list"
+  },
+  {
+    "request": "看看课程讨论里学生怎么回复",
+    "domain": "discussions",
+    "operation": ["读取"],
+    "keywords": ["讨论回复"],
+    "expected_action": "discussions.topic.read"
+  },
+  {
+    "request": "导出大学英语一班成绩",
+    "domain": "statistics",
+    "operation": ["导出"],
+    "keywords": ["班级成绩", "成绩册"],
+    "expected_action": "course.grades.list"
+  },
+  {
+    "request": "查看大学英语一班学生名单",
+    "domain": "class_management",
+    "operation": ["列出"],
+    "keywords": ["班级学生", "学生名单"],
+    "expected_action": "class.students.list"
+  },
+  {
+    "request": "开始已经建好的第一节课签到",
+    "domain": "class_activities",
+    "operation": ["开始"],
+    "keywords": ["签到活动"],
+    "expected_action": "class_activities.activity.start"
+  },
+  {
+    "request": "发起一个新的签到活动",
+    "domain": "class_activities",
+    "operation": ["发起", "新建"],
+    "keywords": ["签到活动"],
+    "expected_status": "not_implemented",
+    "expected_gap": "class_attendance_create_not_implemented"
+  },
+  {
+    "request": "把桌面的讲义直接上传到课件栏目",
+    "domain": "course_assets",
+    "operation": ["上传"],
+    "keywords": ["本地文件", "课件"],
+    "expected_status": "not_implemented",
+    "expected_gap": "local_course_asset_upload_not_implemented"
+  }
+]

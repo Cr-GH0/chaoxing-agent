@@ -1,0 +1,49 @@
+#!/bin/sh
+set -e
+
+find_extra_node() {
+  paths=${WORKBUDDY_EXTRA_PATHS:-}
+  [ -n "$paths" ] || return 1
+  (
+    IFS=:
+    for directory in $paths; do
+      if [ -n "$directory" ] && [ -x "$directory/node" ]; then
+        printf '%s\n' "$directory/node"
+        exit 0
+      fi
+    done
+    exit 1
+  )
+}
+
+find_managed_node() {
+  root=${WORKBUDDY_CONFIG_DIR:-${CODEBUDDY_CONFIG_DIR:-$HOME/.workbuddy}}
+  versions="$root/binaries/node/versions"
+  [ -d "$versions" ] || return 1
+  names=""
+  for directory in "$versions"/*/; do
+    [ -d "$directory" ] || continue
+    version=${directory%/}
+    version=${version##*/}
+    case "$version" in
+      *.installing.*|*.__extract_temp__*) continue ;;
+    esac
+    names="$names$version
+"
+  done
+  [ -n "$names" ] || return 1
+  for version in $(printf '%s' "$names" | sort -Vr); do
+    candidate="$versions/$version/bin/node"
+    if [ -x "$candidate" ]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+NODE_BIN=$(find_extra_node || find_managed_node || command -v node 2>/dev/null || true)
+if [ -z "$NODE_BIN" ]; then
+  exit 127
+fi
+exec "$NODE_BIN" "$@"

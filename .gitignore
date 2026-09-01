@@ -17,3 +17,4 @@ state.json
 *.har
 *.trace.zip
 artifacts/
+.eval-log.jsonl

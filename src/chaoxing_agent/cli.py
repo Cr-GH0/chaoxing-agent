@@ -12,7 +12,6 @@ from typing import Any
 
 from .api import ChaoxingAPI, load_cookie_records
 from .config import Settings
-from .router import route_command
 from .runtime import ActionRuntime, ActionRuntimeError
 
 
@@ -9052,6 +9051,8 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
             params["clazz"] = args.clazz
         return await runtime.execute("discussions.reply.delete", params, args.confirmation_token)
     if args.command == "plan":
+        from .router import route_command
+
         return route_command(" ".join(args.text)).to_dict()
     if args.command == "run":
         return await runtime.execute_command(" ".join(args.text), args.confirmation_token)

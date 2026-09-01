@@ -1,0 +1,9 @@
+{
+  "name": "chaoxing-teacher",
+  "version": "0.12.2",
+  "description": "教师用自然语言操作学习通；运行时和 WorkBuddy 精确权限适配均随包提供。",
+  "author": {
+    "name": "Chaoxing Teacher Skill"
+  },
+  "license": "UNLICENSED"
+}

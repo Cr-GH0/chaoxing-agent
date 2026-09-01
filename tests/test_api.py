@@ -12,6 +12,7 @@ from chaoxing_agent.api import (
     PERSONAL_GROUP_SPEAKING_RULE_FIELDS,
     ChaoxingAPI,
     ChaoxingAPIError,
+    ChaoxingLoginVerificationRequired,
     aes_encrypt_base64,
     content_disposition_filename,
     grade_component_schema,
@@ -279,6 +280,41 @@ def test_failed_http_login_redacts_server_reflected_password(tmp_path, monkeypat
 
     assert password not in str(error.value)
     assert "[redacted]" in str(error.value)
+
+
+def test_http_login_reports_two_factor_verification_without_replacing_cookie(
+    tmp_path, monkeypatch
+) -> None:
+    cookie_file = tmp_path / "session.json"
+    original = '{"cookies":[{"name":"old","value":"still-valid"}]}\n'
+    cookie_file.write_text(original, encoding="utf-8")
+    verification_url = "https://passport2.chaoxing.com/twofactor/check?id=1"
+    session = LoginSession(
+        {
+            "status": False,
+            "containTwoFactorLogin": True,
+            "twoFactorLoginPCUrl": quote(verification_url, safe=""),
+        }
+    )
+    monkeypatch.setattr(ChaoxingAPI, "_new_session", staticmethod(lambda: session))
+
+    with pytest.raises(ChaoxingLoginVerificationRequired) as error:
+        ChaoxingAPI(cookie_file).login("13800138000", "密码123")
+
+    assert error.value.kind == "two_factor"
+    assert error.value.verification_url == verification_url
+    assert cookie_file.read_text(encoding="utf-8") == original
+
+
+def test_http_login_reports_captcha_as_verification_required(tmp_path, monkeypatch) -> None:
+    session = LoginSession({"status": False, "msg2": "请完成滑块验证码"})
+    monkeypatch.setattr(ChaoxingAPI, "_new_session", staticmethod(lambda: session))
+
+    with pytest.raises(ChaoxingLoginVerificationRequired) as error:
+        ChaoxingAPI(tmp_path / "session.json").login("13800138000", "密码123")
+
+    assert error.value.kind == "captcha"
+    assert error.value.verification_url.startswith("https://passport2.chaoxing.com/login")
 
 
 def test_http_login_verifies_cross_application_target_without_returning_signed_queries(

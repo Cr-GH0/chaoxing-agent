@@ -1,0 +1,24 @@
+{
+  "name": "chaoxing-teacher",
+  "version": "0.12.2",
+  "description": "Use natural-language teacher requests to operate Chaoxing through the bundled HTTP runtime.",
+  "author": {
+    "name": "Chaoxing Teacher Skill"
+  },
+  "interface": {
+    "displayName": "学习通教师版",
+    "shortDescription": "用自然语言操作学习通教师端。",
+    "longDescription": "教师只需说出目的，并在需要时直接输入学习通账号和密码。",
+    "developerName": "Chaoxing Teacher Skill",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "帮我看看还有哪些作业没批改。",
+      "给指定班级发一则通知。",
+      "把课件上传到指定课程。"
+    ]
+  }
+}

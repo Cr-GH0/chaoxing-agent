@@ -1,0 +1,4 @@
+interface:
+  display_name: "学习通教师版"
+  short_description: "用自然语言直接处理学习通教师端课程与教学工作"
+  default_prompt: "使用 $chaoxing-teacher 完成这项学习通教师端操作；未登录时先问‘请输入学习通账号。’，收到后再问‘请输入学习通密码。’，把两项明文传给登录命令，登录后继续原任务，并在高影响动作前按实际影响确认。"

@@ -46,7 +46,7 @@ def test_documented_capability_counts_match_the_catalog() -> None:
     assert f"| `observed` surface marker | {observed} |" in capability_map
 
 
-def test_every_platform_action_has_a_direct_natural_language_route() -> None:
+def test_legacy_cli_router_still_covers_every_platform_action() -> None:
     tree = ast.parse((ROOT / "src" / "chaoxing_agent" / "router.py").read_text(encoding="utf-8"))
     route_literals = {
         node.value

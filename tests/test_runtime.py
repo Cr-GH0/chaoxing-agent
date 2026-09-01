@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from chaoxing_agent.api import ChaoxingLoginVerificationRequired
 from chaoxing_agent.config import Settings
 from chaoxing_agent.runtime import ActionRuntime, ActionRuntimeError
 
@@ -28,6 +29,80 @@ async def test_runtime_dispatches_http_login_without_echoing_parameters(monkeypa
 
     assert api.parameters == ("account", "private-password", "23080")
     assert result["result"] == {"logged_in": True, "cookies_saved": 2}
+    assert "private-password" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_runtime_exposes_observable_postconditions_for_reads_and_confirmed_writes(
+    tmp_path, monkeypatch
+) -> None:
+    runtime = ActionRuntime(
+        Settings(
+            cookie_file=tmp_path / "session.json",
+            request_timeout=20.0,
+            confirmation_file=tmp_path / "confirmations.json",
+        )
+    )
+
+    async def dispatch(action, _parameters):
+        if action == "courses.list_teaching":
+            return {"courses": [{"course_name": "英语写作"}]}
+        assert action == "homework.score.set"
+        return {"score": 85, "verification": "fresh submission read showed score 85"}
+
+    monkeypatch.setattr(runtime, "_dispatch", dispatch)
+
+    read_result = await runtime.execute("courses.list_teaching")
+    parameters = {
+        "course": "英语写作",
+        "homework": "第二次作业",
+        "submission": "张三",
+        "score": 85,
+    }
+    preview = await runtime.execute("homework.score.set", parameters)
+    write_result = await runtime.execute(
+        "homework.score.set",
+        parameters,
+        preview["confirmation"]["token"],
+    )
+
+    assert read_result["postcondition"] == {
+        "observed": True,
+        "kind": "read_result_returned",
+        "summary": "当前读取动作返回了结构化结果。",
+    }
+    assert write_result["postcondition"] == {
+        "observed": True,
+        "kind": "runtime_verification",
+        "summary": "fresh submission read showed score 85",
+    }
+    assert (
+        ActionRuntime._observable_postcondition("publish", {"accepted": True})["observed"] is False
+    )
+
+
+@pytest.mark.asyncio
+async def test_runtime_returns_structured_login_verification_state(monkeypatch) -> None:
+    class VerificationAPI:
+        @staticmethod
+        def login(username: str, password: str, *, fid: str):
+            raise ChaoxingLoginVerificationRequired(
+                "two_factor",
+                "学习通要求完成二次验证。",
+                "https://passport2.chaoxing.com/twofactor/check?id=1",
+            )
+
+    runtime = ActionRuntime(Settings(cookie_file=Path("session.json"), request_timeout=20.0))
+    monkeypatch.setattr(runtime, "_api", VerificationAPI)
+
+    result = await runtime.execute(
+        "session.login",
+        {"username": "account", "password": "private-password", "fid": "-1"},
+    )
+
+    assert result["status"] == "verification_required"
+    assert result["verification"]["kind"] == "two_factor"
+    assert result["verification"]["retry"] == "login"
     assert "private-password" not in str(result)
 
 

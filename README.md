@@ -4,6 +4,18 @@ Chaoxing Agent 把学习通/超星教师端、学生端与个人空间的操作�
 
 交付运行时不打开浏览器，不依赖浏览器扩展、WebDriver 或学习通客户端。开发新动作时可以观察网页请求；进入代码库的正式动作必须能够脱离浏览器独立运行。
 
+## 可直接安装的教师 Skill
+
+[skills/chaoxing-teacher](skills/chaoxing-teacher) 是不含宿主专用注册项的标准 Skill 目录。Windows 安装包已自带官方 Python 运行时；WorkBuddy、ZCode、Codex 或其他支持本地 Skill 的 Agent 宿主可载入同一份包，不需要另外注册服务、安装 Python、配置环境变量、指定 Cookie 文件或运行安装向导。
+
+教师的日常入口只有自然语言：直接说出目的；尚未登录时，Agent 先在对话中问账号，再问密码。教师直接在聊天框中输入明文账号和密码，Agent 随后登录并自动继续原请求。发布、发送、成绩提交或覆盖、权限变化、删除和付费等高影响动作仍在执行前按具体影响确认一次。
+
+Skill 自带当前 HTTP 运行时和离线 HTTP 组件，首次运行不下载或安装依赖。Agent 在内部把教师原话整理为领域、操作、对象和值，再由 Skill 在单一领域内返回 typed action 候选；目录排名只用于召回，不能直接授权执行，英文标识仅留在内部执行字段。学生端入口在 Skill 层拒绝。状态目录不可写时自动降级到宿主可写目录；账号会话相互隔离，并提供退出和并发保护。
+
+运行 `python scripts/build_teacher_skill.py` 会同步内置运行时并在 `dist` 只生成一份 `学习通教师版-版本号.zip`。同一份包用于所有支持标准 Skill 的宿主；构建器拒绝把 Cookie、确认记录、状态文件、MCP 服务或 `__pycache__` 装入发布包。
+
+下文的 CLI 与服务接口是本仓库的开发、维护和其他集成路径，不是教师使用该 Skill 的前置步骤。
+
 ## 当前能力
 
 截至 2026-09-01，本仓库包含 554 个已实现动作，覆盖 41 个领域。精确动作名、风险等级、实现状态和实测状态以运行时目录为准：
@@ -49,31 +61,29 @@ CLI、MCP 和自然语言路由共用同一个 `ActionRuntime`，不会形成三
 uv sync --extra dev
 ```
 
-项目依赖只有 `requests`、`cryptography` 和 MCP Python SDK；正式依赖中没有浏览器自动化包。
+仓库开发环境依赖 `requests` 和 MCP Python SDK；教师 Skill 已内置运行所需的纯 Python HTTP 组件，正式运行不安装浏览器自动化包或其他 Python 包。
 
-## 无浏览器登录
+## 开发者 CLI 登录
 
 先指定本地 Cookie 文件位置。该文件可以尚不存在，登录成功后会原子写入：
 
 ```powershell
 $env:CHAOXING_COOKIE_FILE = "$env:LOCALAPPDATA\chaoxing-agent\cookies.json"
-uv run chaoxing-agent login --windows-dialog
+uv run chaoxing-agent login --username "学习通账号"
 ```
 
-Windows 用户建议使用 `--windows-dialog`。它调用系统原生凭据对话框，账号和密码不会成为命令参数，也不会进入 PowerShell 命令历史；对话框不显示“保存”选项，也不会把凭据写入 Windows 凭据管理器。原生凭据缓冲区在调用后清零并释放，密码不会写入结果或 Cookie 文件。登录只有在个人空间验证通过后才保存 Cookie。
-
-普通终端仍可使用 `--username`，密码随后通过隐藏输入读取；无人值守环境也可临时设置 `CHAOXING_USERNAME` 与 `CHAOXING_PASSWORD`。不要在由 Agent 间接控制、可能失去交互进程的终端里使用这种逐行输入方式。
+这一节只供仓库开发调试；教师使用 Skill 时直接按前述聊天流程输入账号和密码。开发 CLI 的密码可在随后出现的终端提示中输入，也可设置 `CHAOXING_USERNAME` 与 `CHAOXING_PASSWORD`。
 
 学银在线等超星跨应用页面需要额外 SSO 时，可把当前页面地址作为目标；运行时先完成平台返回的 HTTP 跳转，再分别验证个人空间登录状态与目标主机，且响应不返回目标查询参数或 SSO 票据：
 
 ```powershell
-uv run chaoxing-agent login --windows-dialog --target-url "https://xueyinonline.chaoxing.com/..."
+uv run chaoxing-agent login --username "学习通账号" --target-url "https://xueyinonline.chaoxing.com/..."
 ```
 
 对于学生课程模块，优先按课程名解析目标，代理无需读取或传递带签名的地址：
 
 ```powershell
-uv run chaoxing-agent login --windows-dialog --learning-course "课程名" --learning-module "直播课/见面课"
+uv run chaoxing-agent login --username "学习通账号" --learning-course "课程名" --learning-module "直播课/见面课"
 ```
 
 该方式需要当前 Cookie 至少仍能读取“我学的课”，以便在内存中选定课程和模块；如果主会话也已过期，先执行一次普通 `login`，再执行上述目标登录。
@@ -147,9 +157,10 @@ uv run chaoxing-agent run "列出《英语写作示例》的未批改作业"
 uv run chaoxing-agent run "搜索招聘岗位《英语教师》，学历本科"
 ```
 
-动作目录中的 552 个平台动作都在中文路由器中登记；`command.plan` 和
-`command.execute` 是解析与执行自然语言命令本身的两个元动作。对于参数不足的命令，
-路由器返回缺失字段和补充提示，不会猜测课程、班级、人员或本地路径。
+上述 `run` 是 CLI 兼容入口，中文路由器继续用于已有命令和回归测试。便携教师 Skill
+不再把它作为自然语言主路径：宿主模型先把教师原话整理成领域、操作、对象和值，运行器
+只在一个领域内返回 typed action 候选；准确 `action_id` 确定后才绑定参数并进入统一动作
+运行时。旧目录排序只负责检索，永远不能凭排名授权执行。
 
 学生端课程内容使用独立的只读语义动作。列出作业、考试和自测只解析列表页，不进入项目、启动作答、接受诚信承诺或提交内容；资料列表只读取根目录或指定的一级文件夹，不会预览、下载或增加浏览次数。
 
