@@ -104,6 +104,10 @@ uv run chaoxing-agent run "列出《英语写作示例》的未批改作业"
 uv run chaoxing-agent run "搜索招聘岗位《英语教师》，学历本科"
 ```
 
+动作目录中的 528 个平台动作都在中文路由器中登记；`command.plan` 和
+`command.execute` 是解析与执行自然语言命令本身的两个元动作。对于参数不足的命令，
+路由器返回缺失字段和补充提示，不会猜测课程、班级、人员或本地路径。
+
 查看所有 CLI 子命令：
 
 ```powershell

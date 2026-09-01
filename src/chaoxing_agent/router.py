@@ -337,6 +337,20 @@ def route_command(command: str) -> CommandPlan:
     if not text:
         return CommandPlan(command, None, message="命令不能为空。")
 
+    if text in {
+        "能力清单",
+        "能力列表",
+        "能力目录",
+        "能力覆盖",
+        "查看能力覆盖",
+        "支持什么",
+        "能做什么",
+    } or re.fullmatch(
+        r"(?:查看|列出|显示)?(?:学习通|超星|代理)?(?:的)?能力(?:清单|列表|目录|覆盖)",
+        text,
+    ):
+        return CommandPlan(text, "capabilities.list", confidence=0.99)
+
     if re.search(r"(?:重新|再次|立即|现在)?登录(?:学习通|超星)|刷新登录", text) and not re.search(
         r"检查|查看|确认|状态|是谁", text
     ):
@@ -3614,6 +3628,54 @@ def route_command(command: str) -> CommandPlan:
             confidence=0.98 if quoted else 0.8,
             missing_fields=[] if quoted else ["search"],
             message="请用书名号提供联系人搜索词。" if not quoted else "",
+        )
+
+    if (
+        re.search(r"通讯录|联系人", text)
+        and "部门" in text
+        and re.search(r"列出|查看|显示|有哪些|列表", text)
+    ):
+        quoted = _extract_quoted(text)
+        fid_match = re.search(r"(?:FID|单位ID)\s*[=:：]?\s*([A-Za-z0-9_-]+)", text, re.I)
+        department_match = re.search(
+            r"(?:部门ID|dept(?:artment)?_?id)\s*[=:：]?\s*([A-Za-z0-9_-]+)",
+            text,
+            re.I,
+        )
+        parameters: dict[str, Any] = {}
+        if fid_match:
+            parameters["fid"] = fid_match.group(1)
+        elif quoted:
+            parameters["fid"] = quoted[0]
+        if "成员" in text:
+            if department_match:
+                parameters["department_id"] = department_match.group(1)
+            elif len(quoted) >= 2:
+                parameters["department_id"] = quoted[1]
+            if len(quoted) >= 3:
+                parameters["search"] = quoted[2]
+            missing = [key for key in ("fid", "department_id") if key not in parameters]
+            return CommandPlan(
+                text,
+                "contacts.department.members.list",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.78,
+                missing_fields=missing,
+                message=(
+                    "请依次提供单位 FID 和部门 ID；需要时再提供成员搜索词。" if missing else ""
+                ),
+            )
+        if len(quoted) >= 2:
+            parameters["parent_id"] = quoted[1]
+        parameters["department_type"] = "custom" if re.search(r"自建|团队", text) else "unit"
+        missing = [] if "fid" in parameters else ["fid"]
+        return CommandPlan(
+            text,
+            "contacts.departments.list",
+            parameters=parameters,
+            confidence=0.98 if not missing else 0.8,
+            missing_fields=missing,
+            message="请提供单位 FID；需要读取下级部门时再提供父部门 ID。" if missing else "",
         )
 
     if "通讯录" in text and "单位" in text and re.search(r"列出|查看|显示|有哪些|列表", text):
@@ -7151,12 +7213,39 @@ def route_command(command: str) -> CommandPlan:
         and not re.search(r"允许|禁止|关闭|开启|谁下载|下载者|下载记录", text)
     ):
         quoted = _extract_quoted(text)
+        bulk_intent = bool(re.search(r"批量|多个|这些|全部|所有", text))
+        single_intent = not bulk_intent and (
+            len(quoted) == 3 or bool(re.search(r"单个|一个|这份|这个|该资料|该文件|资料文件", text))
+        )
+        if single_intent:
+            parameters = {}
+            if quoted:
+                parameters["course"] = quoted[0]
+            if len(quoted) >= 2:
+                parameters["resource"] = quoted[1]
+            if len(quoted) >= 3:
+                parameters["output_path"] = quoted[2]
+            if "覆盖" in text:
+                parameters["overwrite"] = True
+            missing = [
+                key for key in ("course", "resource", "output_path") if key not in parameters
+            ]
+            return CommandPlan(
+                text,
+                "resources.file.download",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.64,
+                missing_fields=missing,
+                message="请依次给出课程、资料标题或 ID、本地输出路径。" if missing else "",
+            )
         parameters = {}
         if quoted:
             parameters["course"] = quoted[0]
         if len(quoted) > 2:
             parameters["resources"] = quoted[1:-1]
             parameters["output_path"] = quoted[-1]
+        if "覆盖" in text:
+            parameters["overwrite"] = True
         missing = [key for key in ("course", "resources", "output_path") if key not in parameters]
         return CommandPlan(
             text,

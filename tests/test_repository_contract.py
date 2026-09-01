@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import tomllib
 from pathlib import Path
 
@@ -43,3 +44,18 @@ def test_documented_capability_counts_match_the_catalog() -> None:
     assert f"| `implemented` | {implemented} |" in capability_map
     assert f"| `live_verified` | {live_verified} |" in capability_map
     assert f"| `observed` surface marker | {observed} |" in capability_map
+
+
+def test_every_platform_action_has_a_direct_natural_language_route() -> None:
+    tree = ast.parse((ROOT / "src" / "chaoxing_agent" / "router.py").read_text(encoding="utf-8"))
+    route_literals = {
+        node.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant) and isinstance(node.value, str)
+    }
+    platform_actions = {
+        action.name
+        for action in IMPLEMENTED_ACTIONS
+        if action.name not in {"command.plan", "command.execute"}
+    }
+    assert platform_actions <= route_literals

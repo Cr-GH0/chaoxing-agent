@@ -1139,8 +1139,8 @@ def test_route_resource_management_commands() -> None:
     labels_clear = route_command("清除《文体写作示例》的资料《Guide.pdf》《Slides.pptx》的全部标签")
 
     assert tree.action == "resources.tree.list"
-    assert downloading.action == "resources.items.download"
-    assert downloading.parameters["resources"] == ["Guide.pdf"]
+    assert downloading.action == "resources.file.download"
+    assert downloading.parameters["resource"] == "Guide.pdf"
     assert downloading.parameters["output_path"].endswith("Guide.pdf")
     assert folder.action == "resources.folder.create"
     assert folder.parameters["parent"] == "Unit 1"
@@ -1960,3 +1960,26 @@ def test_route_personal_group_activity_operations() -> None:
     assert reorder.action == "groups.activities.reorder"
     assert reorder.parameters["activities"] == ["入口二", "入口一"]
     assert delete.action == "groups.activity.delete"
+
+
+def test_routes_capabilities_contact_departments_and_single_resource_download() -> None:
+    capabilities = route_command("查看能力覆盖")
+    assert capabilities.action == "capabilities.list"
+
+    departments = route_command("列出单位通讯录《20001》的部门")
+    assert departments.action == "contacts.departments.list"
+    assert departments.parameters == {"fid": "20001", "department_type": "unit"}
+
+    members = route_command("列出单位通讯录《20001》的部门《dept-8》成员")
+    assert members.action == "contacts.department.members.list"
+    assert members.parameters == {"fid": "20001", "department_id": "dept-8"}
+
+    download = route_command(
+        r"下载《英语写作示例》的资料文件《Unit 1.pdf》到《D:\Exports\Unit 1.pdf》"
+    )
+    assert download.action == "resources.file.download"
+    assert download.parameters == {
+        "course": "英语写作示例",
+        "resource": "Unit 1.pdf",
+        "output_path": r"D:\Exports\Unit 1.pdf",
+    }
