@@ -2799,6 +2799,32 @@ async def chaoxing_read_learning_homework(
 
 
 @mcp.tool()
+async def chaoxing_enter_learning_homework_answer(
+    course: str,
+    homework: str,
+) -> dict[str, Any]:
+    """Enter a learner homework answer form without saving or submitting."""
+    return await runtime.execute(
+        "learning.course.homework.answer.enter",
+        {"course": course, "homework": homework},
+    )
+
+
+@mcp.tool()
+async def chaoxing_redo_learning_homework(
+    course: str,
+    homework: str,
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm overwriting the prior attempt and redoing learner homework."""
+    return await runtime.execute(
+        "learning.course.homework.redo",
+        {"course": course, "homework": homework},
+        confirmation_token,
+    )
+
+
+@mcp.tool()
 async def chaoxing_list_learning_homework_attempts(
     course: str,
     homework: str,

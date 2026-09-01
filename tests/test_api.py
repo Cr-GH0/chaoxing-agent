@@ -48,6 +48,7 @@ from chaoxing_agent.api import (
     parse_learning_ai_tools,
     parse_learning_chapters,
     parse_learning_courses,
+    parse_learning_homework_answer_form,
     parse_learning_homework_attempts,
     parse_learning_homework_detail,
     parse_learning_materials,
@@ -798,6 +799,8 @@ def test_parse_learner_semantic_pages_without_exposing_session_tokens() -> None:
           </div>
         </div>
         <a href="/mooc-ans/mooc2/work/dowork?enc=secret">继续作答</a>
+        <button onclick="redoWork()">重做</button>
+        <script>function redoWork() { var redoTimes = 3 + 1 - 2; }</script>
         """
     )
     assert homework_detail["title"] == "BOPPPS 设计"
@@ -809,8 +812,37 @@ def test_parse_learner_semantic_pages_without_exposing_session_tokens() -> None:
     assert "redacted" in homework_detail["questions"][0]["stem_images"][0]
     assert homework_detail["questions"][0]["student_answer"] == "使用真实问题引入。"
     assert homework_detail["can_answer"] is True
+    assert homework_detail["can_redo"] is True
+    assert homework_detail["redo_times_remaining"] == 2
     assert "secret" not in str(homework_detail)
     assert "image-token" not in str(homework_detail)
+
+    answer_form = parse_learning_homework_answer_form(
+        """
+        <input type="hidden" id="courseId" value="10">
+        <input type="hidden" id="classId" value="20">
+        <input type="hidden" id="workId" value="88">
+        <input type="hidden" id="answerId" value="101">
+        <form id="workForm" method="post" action="/work/save?enc=secret">
+          <div class="mark_item"><h2 class="type_tit">一. 简答题（共1题，100分）</h2>
+            <div class="questionLi" data="1">
+              <h3 class="mark_name">1. <span class="colorShallow">(简答题)</span>
+                <span class="qtContent">说明课堂导入。</span>
+              </h3>
+              <textarea id="answer1" name="answer1"></textarea>
+            </div>
+          </div>
+          <button type="button" onclick="saveWork()">暂存</button>
+          <button type="button" onclick="submitWork()">提交</button>
+        </form>
+        """
+    )
+    assert answer_form["answer_form_detected"] is True
+    assert answer_form["question_count"] == 1
+    assert answer_form["save_available"] is True
+    assert answer_form["submit_available"] is True
+    assert answer_form["forms"][0]["action"]["query_keys"] == ["enc"]
+    assert "secret" not in str(answer_form)
 
     attempts = parse_learning_homework_attempts(
         """
@@ -941,6 +973,281 @@ def test_learning_homework_detail_read_keeps_list_state_unchanged(monkeypatch) -
     )
     with pytest.raises(ChaoxingAPIError, match="state changed while reading"):
         api.read_learning_homework(course, "BOPPPS 设计")
+
+
+def test_learning_homework_read_stops_before_answer_form_redirect(monkeypatch) -> None:
+    list_html = """
+    <ul><li onclick="goTask(this);"
+      data="https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?workId=88&amp;answerId=0&amp;enc=secret"
+      aria-label="可作答作业 ; 未交">
+      <p class="overHidden2 fl">可作答作业</p><p class="status fl">未交</p>
+    </li></ul>
+    """
+
+    class Response:
+        url = "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?enc=secret"
+        status_code = 302
+        headers = {"Location": "/mooc-ans/mooc2/work/dowork?workId=88&answerId=0&enc=secret"}
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def get(self, url: str, **kwargs) -> Response:
+            self.calls.append((url, kwargs))
+            return Response()
+
+    session = Session()
+    page = type(
+        "Page",
+        (),
+        {"url": "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=10"},
+    )()
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(
+        api,
+        "_learning_module_response",
+        lambda _course, _module: {
+            "session": session,
+            "response": page,
+            "html": list_html,
+        },
+    )
+    course = {"course_id": "10", "course_name": "Writing", "clazz_id": "20"}
+
+    with pytest.raises(ChaoxingAPIError, match="stopped before requesting that form"):
+        api.read_learning_homework(course, "可作答作业")
+
+    assert len(session.calls) == 1
+    assert session.calls[0][1]["allow_redirects"] is False
+
+
+def test_learning_homework_answer_enter_follows_only_explicit_answer_action(monkeypatch) -> None:
+    list_html = """
+    <ul><li onclick="goTask(this);"
+      data="https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?workId=88&amp;answerId=0&amp;enc=secret"
+      aria-label="可作答作业 ; 未交">
+      <p class="overHidden2 fl">可作答作业</p><p class="status fl">未交</p>
+    </li></ul>
+    """
+    answer_html = """
+    <input type="hidden" id="courseId" value="10">
+    <input type="hidden" id="classId" value="20">
+    <input type="hidden" id="workId" value="88">
+    <input type="hidden" id="answerId" value="101">
+    <h2 class="mark_title">可作答作业</h2>
+    <form id="workForm" method="post" action="/work/save?enc=secret">
+      <div class="mark_item"><h2 class="type_tit">一. 简答题（共1题，100分）</h2>
+        <div class="questionLi" data="1">
+          <h3 class="mark_name">1. <span class="colorShallow">(简答题)</span>
+            <span class="qtContent">说明课堂导入。</span>
+          </h3>
+          <textarea id="answer1" name="answer1"></textarea>
+        </div>
+      </div>
+      <button type="button" onclick="saveWork()">暂存</button>
+      <button type="button" onclick="submitWork()">提交</button>
+    </form>
+    """
+
+    class Response:
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+
+        def __init__(
+            self,
+            url: str,
+            status_code: int,
+            html: str = "",
+            location: str = "",
+        ) -> None:
+            self.url = url
+            self.status_code = status_code
+            self.content = html.encode("utf-8")
+            self.headers = {"Content-Type": "text/html;charset=UTF-8"}
+            if location:
+                self.headers["Location"] = location
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def get(self, url: str, **kwargs) -> Response:
+            self.calls.append((url, kwargs))
+            if url.endswith("/mooc-ans/mooc2/work/dowork?workId=88&answerId=0&enc=secret"):
+                return Response(
+                    "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork"
+                    "?workId=88&answerId=101&enc=secret",
+                    200,
+                    answer_html,
+                )
+            return Response(
+                url,
+                302,
+                location=("/mooc-ans/mooc2/work/dowork?workId=88&answerId=0&enc=secret"),
+            )
+
+    session = Session()
+    page = type(
+        "Page",
+        (),
+        {"url": "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=10"},
+    )()
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(
+        api,
+        "_learning_module_response",
+        lambda _course, _module: {
+            "session": session,
+            "response": page,
+            "html": list_html,
+        },
+    )
+    course = {"course_id": "10", "course_name": "Writing", "clazz_id": "20"}
+
+    result = api.enter_learning_homework_answer(course, "可作答作业")
+
+    assert result["page"]["path"] == "/mooc-ans/mooc2/work/dowork"
+    assert result["form"]["answer_form_detected"] is True
+    assert result["form"]["work_id"] == "88"
+    assert result["form"]["answer_id"] == "101"
+    assert result["answer_instance_created"] is True
+    assert len(session.calls) == 2
+    assert all(call[1]["allow_redirects"] is False for call in session.calls)
+    assert "secret" not in str(result)
+
+
+def test_learning_homework_redo_uses_observed_endpoint_then_requires_answer_form(
+    monkeypatch,
+) -> None:
+    class Response:
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+
+        def __init__(self, url: str, content: str, content_type: str) -> None:
+            self.url = url
+            self.status_code = 200
+            self.headers = {"Content-Type": content_type}
+            self.content = content.encode("utf-8")
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def get(self, url: str, **kwargs) -> Response:
+            self.calls.append((url, kwargs))
+            if url.endswith("/mooc-ans/work/phone/redo"):
+                return Response(url, '{"status":1,"msg":"ok"}', "application/json")
+            return Response(
+                "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork"
+                "?workId=88&answerId=100&enc=secret",
+                answer_html,
+                "text/html;charset=UTF-8",
+            )
+
+    session = Session()
+    homework = {
+        "title": "可重做作业",
+        "work_id": "88",
+        "answer_id": "99",
+        "status": "已交",
+        "status_key": "submitted",
+        "entry_url": "https://mooc1.chaoxing.com/task?enc=secret",
+    }
+    detail_html = """
+    <input type="hidden" id="courseId" value="10">
+    <input type="hidden" id="classId" value="20">
+    <input type="hidden" id="cpi" value="30">
+    <input type="hidden" id="workId" value="88">
+    <input type="hidden" id="answerId" value="99">
+    <script>
+      function modifyAnswer() {
+        location.href = "/mooc-ans/mooc2/work/dowork?courseId=10&classId=20&cpi=30&workId=88"
+          + "&answerId=99&standardEnc=fake&enc=secret";
+      }
+    </script>
+    """
+    answer_html = """
+    <input type="hidden" id="courseId" value="10">
+    <input type="hidden" id="classId" value="20">
+    <input type="hidden" id="workId" value="88">
+    <input type="hidden" id="answerId" value="100">
+    <form id="workForm" method="post" action="/work/save?enc=secret">
+      <div class="mark_item"><h2 class="type_tit">一. 简答题（共1题，100分）</h2>
+        <div class="questionLi" data="1">
+          <h3 class="mark_name">1. <span class="colorShallow">(简答题)</span>
+            <span class="qtContent">说明课堂导入。</span>
+          </h3>
+          <textarea id="answer1" name="answer1"></textarea>
+        </div>
+      </div>
+    </form>
+    """
+    page = type(
+        "Page",
+        (),
+        {"url": "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/view?enc=secret"},
+    )()
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(
+        api,
+        "_learning_homework_detail_context",
+        lambda _course, _homework: {
+            "homework": homework,
+            "detail": {"can_redo": True, "redo_times_remaining": 1},
+            "html": detail_html,
+            "response": page,
+            "session": session,
+        },
+    )
+    monkeypatch.setattr(
+        api,
+        "list_learning_homeworks",
+        lambda _course: {
+            "homeworks": [
+                {
+                    **homework,
+                    "answer_id": "100",
+                    "status": "未交",
+                    "status_key": "unsubmitted",
+                }
+            ]
+        },
+    )
+    course = {
+        "course_id": "10",
+        "course_name": "Writing",
+        "clazz_id": "20",
+        "cpi": "30",
+    }
+
+    result = api.redo_learning_homework(course, "可重做作业")
+
+    assert result["redo_times_before"] == 1
+    assert result["redo_request"]["path"] == "/mooc-ans/work/phone/redo"
+    assert result["answer"]["form"]["answer_form_detected"] is True
+    assert result["answer"]["form"]["answer_id"] == "100"
+    assert len(session.calls) == 2
+    assert session.calls[0][1]["params"] == {
+        "courseId": "10",
+        "classId": "20",
+        "cpi": "30",
+        "workId": "88",
+        "workAnswerId": "99",
+    }
+    assert "secret" not in str(result)
 
 
 def test_learning_homework_attempt_history_uses_observed_select_times_route(

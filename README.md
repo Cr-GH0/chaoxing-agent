@@ -6,7 +6,7 @@ Chaoxing Agent 把学习通/超星教师端、学生端与个人空间的操作�
 
 ## 当前能力
 
-截至 2026-09-01，本仓库包含 552 个已实现动作，覆盖 41 个领域。精确动作名、风险等级、实现状态和实测状态以运行时目录为准：
+截至 2026-09-01，本仓库包含 554 个已实现动作，覆盖 41 个领域。精确动作名、风险等级、实现状态和实测状态以运行时目录为准：
 
 ```powershell
 uv run chaoxing-agent capabilities
@@ -112,6 +112,8 @@ uv run chaoxing-agent learning-open "课程名称" "章节"
 uv run chaoxing-agent learning-chapters "课程名称"
 uv run chaoxing-agent learning-homeworks "课程名称"
 uv run chaoxing-agent learning-homework-read "课程名称" "作业标题或ID"
+uv run chaoxing-agent learning-homework-answer-enter "课程名称" "作业标题或ID"
+uv run chaoxing-agent learning-homework-redo "课程名称" "作业标题或ID"
 uv run chaoxing-agent learning-homework-attempts "课程名称" "作业标题或ID"
 uv run chaoxing-agent learning-homework-attempt-read "课程名称" "作业标题或ID" "次数"
 uv run chaoxing-agent learning-materials "课程名称"
@@ -134,6 +136,8 @@ uv run chaoxing-agent run "打开我学课程《课程名称》的《章节》"
 uv run chaoxing-agent run "列出我学课程《课程名称》的章节"
 uv run chaoxing-agent run "查看我学课程《课程名称》的作业"
 uv run chaoxing-agent run "查看我学课程《课程名称》的作业《作业标题》详情"
+uv run chaoxing-agent run "进入我学课程《课程名称》的作业《作业标题》开始答题"
+uv run chaoxing-agent run "重做我学课程《课程名称》的作业《作业标题》"
 uv run chaoxing-agent run "查看我学课程《课程名称》的作业《作业标题》作答记录"
 uv run chaoxing-agent run "查看我学课程《课程名称》的作业《作业标题》第2次作答记录"
 uv run chaoxing-agent run "查看我学课程《课程名称》的学习记录"
@@ -143,7 +147,7 @@ uv run chaoxing-agent run "列出《英语写作示例》的未批改作业"
 uv run chaoxing-agent run "搜索招聘岗位《英语教师》，学历本科"
 ```
 
-动作目录中的 550 个平台动作都在中文路由器中登记；`command.plan` 和
+动作目录中的 552 个平台动作都在中文路由器中登记；`command.plan` 和
 `command.execute` 是解析与执行自然语言命令本身的两个元动作。对于参数不足的命令，
 路由器返回缺失字段和补充提示，不会猜测课程、班级、人员或本地路径。
 

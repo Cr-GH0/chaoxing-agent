@@ -2300,9 +2300,35 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         live_verified=True,
         description=(
             "读取指定学生作业的时间、题型、题干、附件和当前答案；读取后复核列表状态与"
-            "答题 ID 未变化，不发送保存或提交请求。"
+            "答题 ID 未变化；若下一跳是答题表单，则在请求表单前停止。"
         ),
         aliases=("查看学生作业详情", "读取我的作业题目", "查看我的作业答案"),
+    ),
+    ActionSpec(
+        "learning.course.homework.answer.enter",
+        "进入学生作业答题",
+        "learning_homework",
+        ActionRisk.WRITE,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description=(
+            "显式请求指定作业的答题表单；该动作可能创建或恢复答题实例，但不保存或"
+            "提交答案。当前账号没有活动期可作答样本，尚未完成真实表单验证。"
+        ),
+        aliases=("开始作答学生作业", "继续我的作业", "进入作业答题页"),
+    ),
+    ActionSpec(
+        "learning.course.homework.redo",
+        "重做学生作业",
+        "learning_homework",
+        ActionRisk.DELETE,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description=(
+            "覆盖上一份作答记录并进入新的答题表单；执行前必须确认，且只有服务器确认"
+            "重做并回读到匹配表单才报告成功。当前账号没有可重做样本，尚未实测。"
+        ),
+        aliases=("重新作答学生作业", "覆盖并重做我的作业"),
     ),
     ActionSpec(
         "learning.course.homework.attempts.list",

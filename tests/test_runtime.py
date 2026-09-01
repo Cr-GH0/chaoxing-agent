@@ -195,6 +195,22 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
             }
 
         @staticmethod
+        def enter_learning_homework_answer(course, homework):
+            return {
+                "course": course,
+                "homework": {"title": homework},
+                "form": {"answer_form_detected": True},
+            }
+
+        @staticmethod
+        def redo_learning_homework(course, homework):
+            return {
+                "course": course,
+                "homework": {"title": homework},
+                "answer": {"form": {"answer_form_detected": True}},
+            }
+
+        @staticmethod
         def list_learning_homework_attempts(course, homework):
             return {
                 "course": course,
@@ -288,6 +304,19 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
         "learning.course.homework.read",
         {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
     )
+    homework_answer = await runtime.execute(
+        "learning.course.homework.answer.enter",
+        {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
+    )
+    redo_preview = await runtime.execute(
+        "learning.course.homework.redo",
+        {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
+    )
+    redo_confirmed = await runtime.execute(
+        "learning.course.homework.redo",
+        {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
+        redo_preview["confirmation"]["token"],
+    )
     homework_attempts = await runtime.execute(
         "learning.course.homework.attempts.list",
         {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
@@ -345,6 +374,10 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
     assert discussions["result"]["class_only"] is True
     assert homeworks["result"]["homeworks"] == []
     assert homework["result"]["homework"]["title"] == "BOPPPS 设计"
+    assert homework_answer["result"]["form"]["answer_form_detected"] is True
+    assert redo_preview["status"] == "confirmation_required"
+    assert "覆盖" in redo_preview["confirmation"]["summary"]
+    assert redo_confirmed["result"]["answer"]["form"]["answer_form_detected"] is True
     assert homework_attempts["result"]["attempts"][0]["attempt_id"] == "1"
     assert homework_attempt["result"]["attempt"]["attempt_id"] == "1"
     assert exams["result"]["exams"] == []

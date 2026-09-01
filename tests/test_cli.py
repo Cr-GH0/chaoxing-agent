@@ -45,6 +45,18 @@ def test_learning_cli_parses_semantic_read_commands() -> None:
     homework = build_parser().parse_args(
         ["learning-homework-read", "新教师入职培训", "BOPPPS设计小讨论"]
     )
+    homework_answer = build_parser().parse_args(
+        ["learning-homework-answer-enter", "新教师入职培训", "BOPPPPS设计小讨论"]
+    )
+    homework_redo = build_parser().parse_args(
+        [
+            "learning-homework-redo",
+            "新教师入职培训",
+            "BOPPPPS设计小讨论",
+            "--confirmation-token",
+            "redo-token",
+        ]
+    )
     homework_attempts = build_parser().parse_args(
         ["learning-homework-attempts", "新教师入职培训", "BOPPPPS设计小讨论"]
     )
@@ -78,6 +90,8 @@ def test_learning_cli_parses_semantic_read_commands() -> None:
     assert discussions.class_only is True and discussions.search == "环境"
     assert homeworks.status == "unsubmitted"
     assert homework.homework == "BOPPPS设计小讨论"
+    assert homework_answer.command == "learning-homework-answer-enter"
+    assert homework_redo.confirmation_token == "redo-token"
     assert homework_attempts.command == "learning-homework-attempts"
     assert homework_attempt.attempt == "1"
     assert exams.command == "learning-exams"

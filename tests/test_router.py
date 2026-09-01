@@ -519,6 +519,10 @@ def test_route_learning_course_semantic_reads() -> None:
     discussions = route_command("搜索我学课程《英语文体与写作》本班讨论《环境》")
     homeworks = route_command("查看我学课程《英语文体与写作》的未交作业列表")
     homework = route_command("查看我学课程《新教师入职培训》的作业《BOPPPS设计小讨论》详情")
+    homework_redo = route_command("重做我学课程《新教师入职培训》的作业《BOPPPPS设计小讨论》")
+    homework_answer = route_command(
+        "进入我学课程《新教师入职培训》的作业《BOPPPPS设计小讨论》开始答题"
+    )
     homework_attempts = route_command(
         "查看我学课程《新教师入职培训》的作业《BOPPPPS设计小讨论》作答记录"
     )
@@ -548,6 +552,13 @@ def test_route_learning_course_semantic_reads() -> None:
     assert homework.parameters == {
         "course": "新教师入职培训",
         "homework": "BOPPPS设计小讨论",
+    }
+    assert homework_redo.action == "learning.course.homework.redo"
+    assert homework_redo.parameters["homework"] == "BOPPPPS设计小讨论"
+    assert homework_answer.action == "learning.course.homework.answer.enter"
+    assert homework_answer.parameters == {
+        "course": "新教师入职培训",
+        "homework": "BOPPPPS设计小讨论",
     }
     assert homework_attempts.action == "learning.course.homework.attempts.list"
     assert homework_attempts.parameters == {

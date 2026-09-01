@@ -7049,6 +7049,21 @@ def parse_learning_homework_detail(html: str) -> dict[str, Any]:
         href = str(attrs.get("href") or attrs.get("data") or "").strip()
         if href:
             actionable_paths.append(urlparse(href).path.casefold())
+    redo_times_match = re.search(
+        r"\bvar\s+redoTimes\s*=\s*(\d+)\s*\+\s*(\d+)\s*-\s*(\d+)\s*;",
+        source,
+        flags=re.I,
+    )
+    redo_times_remaining = (
+        max(
+            0,
+            int(redo_times_match.group(1))
+            + int(redo_times_match.group(2))
+            - int(redo_times_match.group(3)),
+        )
+        if redo_times_match
+        else None
+    )
 
     questions: list[dict[str, Any]] = []
     groups: list[dict[str, Any]] = []
@@ -7189,6 +7204,7 @@ def parse_learning_homework_detail(html: str) -> dict[str, Any]:
         "can_answer": any("/dowork" in path for path in actionable_paths),
         "can_modify_answer": any("modifyanswer(" in value for value in actionable_onclick),
         "can_redo": any("redowork(" in value for value in actionable_onclick),
+        "redo_times_remaining": redo_times_remaining,
     }
 
 
@@ -7276,6 +7292,140 @@ def resolve_learning_homework_attempt(
         f"{item.get('index')}. {item.get('label')} ({item.get('attempt_id')})" for item in partial
     )
     raise ChaoxingAPIError(f"multiple homework attempts match: {candidates}")
+
+
+def _learning_homework_answer_entry_url(html: str, base_url: str) -> str:
+    source = str(html or "")
+    for opening in re.finditer(r"<(?:a|button|input)\b[^>]*>", source, flags=re.I | re.S):
+        attrs = html_attrs(opening.group(0))
+        raw_url = str(attrs.get("href") or attrs.get("data") or "").strip()
+        if raw_url and urlparse(urljoin(base_url, unescape(raw_url))).path.casefold().rstrip(
+            "/"
+        ).endswith("/mooc2/work/dowork"):
+            return urljoin(base_url, unescape(raw_url))
+
+    function = re.search(
+        r"\bfunction\s+modifyAnswer\s*\([^)]*\)\s*\{(?P<body>[\s\S]*?)\n?\}",
+        source,
+        flags=re.I,
+    )
+    if function:
+        assignment = re.search(
+            r"\blocation\.href\s*=\s*(?P<expression>[\s\S]*?);",
+            function.group("body"),
+            flags=re.I,
+        )
+        if assignment:
+            chunks = [
+                unescape(match.group(2))
+                for match in re.finditer(
+                    r"(['\"])(.*?)\1",
+                    assignment.group("expression"),
+                    flags=re.S,
+                )
+            ]
+            raw_url = "".join(chunks).strip()
+            if raw_url and urlparse(urljoin(base_url, raw_url)).path.casefold().rstrip(
+                "/"
+            ).endswith("/mooc2/work/dowork"):
+                return urljoin(base_url, raw_url)
+    raise ChaoxingAPIError("learner homework page does not expose an actionable answer URL")
+
+
+def parse_learning_homework_answer_form(
+    html: str,
+    *,
+    base_url: str = MOOC2_BASE_URL,
+) -> dict[str, Any]:
+    """Parse an opened learner homework answer form without returning tokens or values."""
+
+    source = str(html or "")
+    detail = parse_learning_homework_detail(source)
+    forms: list[dict[str, Any]] = []
+    for opening in re.finditer(r"<form\b[^>]*>", source, flags=re.I | re.S):
+        attrs = html_attrs(opening.group(0))
+        raw_action = str(attrs.get("action") or "").strip()
+        action = urlparse(urljoin(base_url, unescape(raw_action))) if raw_action else None
+        forms.append(
+            {
+                "index": len(forms) + 1,
+                "id": str(attrs.get("id") or ""),
+                "name": str(attrs.get("name") or ""),
+                "method": str(attrs.get("method") or "GET").upper(),
+                "action": (
+                    {
+                        "host": action.netloc,
+                        "path": action.path,
+                        "query_keys": sorted(
+                            {key for key, _ in parse_qsl(action.query, keep_blank_values=True)}
+                        ),
+                    }
+                    if action
+                    else None
+                ),
+            }
+        )
+
+    controls: list[dict[str, str]] = []
+    seen_controls: set[tuple[str, str, str, str]] = set()
+    save_available = False
+    submit_available = False
+    for opening in re.finditer(
+        r"<(?:input|textarea|select|button|a)\b[^>]*>",
+        source,
+        flags=re.I | re.S,
+    ):
+        attrs = html_attrs(opening.group(0))
+        tag_match = re.match(r"<([A-Za-z0-9]+)", opening.group(0))
+        tag = tag_match.group(1).casefold() if tag_match else ""
+        name = str(attrs.get("name") or "")
+        control_id = str(attrs.get("id") or "")
+        control_type = str(attrs.get("type") or "").casefold()
+        key = (tag, name, control_id, control_type)
+        if (name or control_id) and key not in seen_controls:
+            seen_controls.add(key)
+            controls.append(
+                {
+                    "tag": tag,
+                    "name": name,
+                    "id": control_id,
+                    "type": control_type,
+                }
+            )
+        element = opening.group(0) if tag == "input" else _html_element_fragment(source, opening)
+        label = " ".join(
+            part
+            for part in (
+                html_text(element),
+                str(attrs.get("value") or ""),
+                str(attrs.get("title") or ""),
+                str(attrs.get("aria-label") or ""),
+            )
+            if part
+        )
+        onclick = str(attrs.get("onclick") or "").casefold()
+        if re.search(r"暂存|保存", label) or "save" in onclick:
+            save_available = True
+        if "提交" in label or "submit" in onclick or control_type == "submit":
+            submit_available = True
+
+    answer_form_detected = bool(forms and (detail["question_count"] or controls))
+    return {
+        "answer_form_detected": answer_form_detected,
+        "course_id": detail["course_id"],
+        "clazz_id": detail["clazz_id"],
+        "work_id": detail["work_id"],
+        "answer_id": detail["answer_id"],
+        "title": detail["title"],
+        "question_count": detail["question_count"],
+        "questions": detail["questions"],
+        "form_count": len(forms),
+        "forms": forms,
+        "control_count": len(controls),
+        "controls": controls,
+        "save_available": save_available,
+        "submit_available": submit_available,
+    }
 
 
 def parse_learning_materials(html: str) -> list[dict[str, Any]]:
@@ -20655,6 +20805,8 @@ class ChaoxingAPI:
         self,
         course: dict[str, Any],
         homework_query: str,
+        *,
+        allow_answer_form: bool = False,
     ) -> dict[str, Any]:
         module = self._learning_module_response(course, "作业")
         entries = _parse_learning_task_entries(str(module["html"]), redact_urls=False)
@@ -20663,19 +20815,63 @@ class ChaoxingAPI:
             urljoin(str(module["response"].url), str(homework["entry_url"])),
             "learner homework URL",
         )
+        request_url = entry_url
+        referer = str(module["response"].url)
+        response: Any | None = None
         try:
-            response = module["session"].get(
-                entry_url,
-                timeout=max(self.timeout, 60),
-                allow_redirects=True,
-                headers={"Referer": str(module["response"].url)},
-            )
-            response.raise_for_status()
+            for _ in range(8):
+                response = module["session"].get(
+                    request_url,
+                    timeout=max(self.timeout, 60),
+                    allow_redirects=False,
+                    headers={"Referer": referer},
+                )
+                if 300 <= int(response.status_code) < 400:
+                    location = str(response.headers.get("Location") or "").strip()
+                    if not location:
+                        raise ChaoxingAPIError("learner homework redirect did not expose a target")
+                    next_url = validated_chaoxing_url(
+                        urljoin(request_url, location),
+                        "learner homework redirect URL",
+                    )
+                    next_path = urlparse(next_url).path.casefold().rstrip("/")
+                    if next_path.endswith("/mooc2/work/dowork") and not allow_answer_form:
+                        self._verify_learning_homework_state_unchanged(
+                            course,
+                            homework,
+                            "probing its detail redirect",
+                        )
+                        raise ChaoxingAPIError(
+                            "learner homework currently opens an answer form; "
+                            "the read action stopped before requesting that form"
+                        )
+                    referer = request_url
+                    request_url = next_url
+                    continue
+                response.raise_for_status()
+                break
+            else:
+                raise ChaoxingAPIError("learner homework exceeded the redirect limit")
         except requests.RequestException as exc:
             raise ChaoxingAPIError(
                 f"learner homework detail request failed: {type(exc).__name__}"
             ) from exc
+        if response is None:
+            raise ChaoxingAPIError("learner homework detail returned no response")
         validated_chaoxing_url(response.url, "learner homework final URL")
+        if (
+            urlparse(response.url).path.casefold().rstrip("/").endswith("/mooc2/work/dowork")
+            and not allow_answer_form
+        ):
+            self._verify_learning_homework_state_unchanged(
+                course,
+                homework,
+                "probing its detail response",
+            )
+            raise ChaoxingAPIError(
+                "learner homework detail resolved to an answer form; "
+                "the read action stopped without parsing or submitting it"
+            )
         html = self._decode(response)
         if "passport2.chaoxing.com/login" in response.url.casefold() or (
             "passport2.chaoxing.com/login" in html.casefold()
@@ -20823,6 +21019,225 @@ class ChaoxingAPI:
             "verification": (
                 "learner homework detail parsed through HTTP; list status and answer ID "
                 "were unchanged after reading; no save or submit request was sent"
+            ),
+        }
+
+    def enter_learning_homework_answer(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+        *,
+        _detail_context: dict[str, Any] | None = None,
+        _redo_acknowledged: bool = False,
+    ) -> dict[str, Any]:
+        context = _detail_context or self._learning_homework_detail_context(
+            course, homework_query, allow_answer_form=True
+        )
+        homework = context["homework"]
+        response = context["response"]
+        html = str(context["html"])
+        answer_path = urlparse(response.url).path.casefold().rstrip("/")
+        if not answer_path.endswith("/mooc2/work/dowork"):
+            detail = context["detail"]
+            if (
+                not _redo_acknowledged
+                and not detail.get("can_answer")
+                and not detail.get("can_modify_answer")
+            ):
+                raise ChaoxingAPIError(
+                    "learner homework does not currently expose an answer or modify action"
+                )
+            answer_url = validated_chaoxing_url(
+                _learning_homework_answer_entry_url(html, str(response.url)),
+                "learner homework answer URL",
+            )
+            request_url = answer_url
+            referer = str(response.url)
+            response = None
+            try:
+                for _ in range(8):
+                    response = context["session"].get(
+                        request_url,
+                        timeout=max(self.timeout, 60),
+                        allow_redirects=False,
+                        headers={"Referer": referer},
+                    )
+                    if 300 <= int(response.status_code) < 400:
+                        location = str(response.headers.get("Location") or "").strip()
+                        if not location:
+                            raise ChaoxingAPIError(
+                                "learner homework answer redirect did not expose a target"
+                            )
+                        next_url = validated_chaoxing_url(
+                            urljoin(request_url, location),
+                            "learner homework answer redirect URL",
+                        )
+                        referer = request_url
+                        request_url = next_url
+                        continue
+                    response.raise_for_status()
+                    break
+                else:
+                    raise ChaoxingAPIError(
+                        "learner homework answer form exceeded the redirect limit"
+                    )
+            except requests.RequestException as exc:
+                raise ChaoxingAPIError(
+                    f"learner homework answer-form request failed: {type(exc).__name__}"
+                ) from exc
+            if response is None:
+                raise ChaoxingAPIError("learner homework answer form returned no response")
+            validated_chaoxing_url(response.url, "learner homework answer-form final URL")
+            html = self._decode(response)
+
+        if "passport2.chaoxing.com/login" in response.url.casefold() or (
+            "passport2.chaoxing.com/login" in html.casefold()
+        ):
+            raise ChaoxingAPIError("learner homework answer form was redirected to login")
+        final = urlparse(response.url)
+        if not final.path.casefold().rstrip("/").endswith("/mooc2/work/dowork"):
+            raise ChaoxingAPIError("learner homework did not reach the observed answer-form path")
+
+        form = parse_learning_homework_answer_form(html, base_url=str(response.url))
+        final_query = {
+            key.casefold(): items[-1]
+            for key, items in parse_qs(final.query, keep_blank_values=True).items()
+            if items
+        }
+        form["work_id"] = form["work_id"] or final_query.get("workid", "")
+        form["answer_id"] = form["answer_id"] or final_query.get("answerid", "")
+        form["course_id"] = form["course_id"] or course["course_id"]
+        form["clazz_id"] = form["clazz_id"] or course["clazz_id"]
+        form["title"] = form["title"] or homework["title"]
+        if not form["answer_form_detected"]:
+            raise ChaoxingAPIError(
+                "learner homework reached the answer path, but no answer form was detected"
+            )
+        if form["work_id"] != homework["work_id"]:
+            raise ChaoxingAPIError("learner homework answer form did not match the selected work")
+
+        refreshed = self.list_learning_homeworks(course)
+        after = resolve_homework(refreshed["homeworks"], homework["work_id"])
+        postcondition = {
+            "status_before": str(homework.get("status") or ""),
+            "status_after": str(after.get("status") or ""),
+            "answer_id_before": str(homework.get("answer_id") or ""),
+            "answer_id_after": str(after.get("answer_id") or ""),
+            "answer_id_in_form": str(form.get("answer_id") or ""),
+            "answer_form_detected": True,
+        }
+        return {
+            **self._learning_course_result(course),
+            "homework": self._public_learning_homework(homework),
+            "page": {
+                "host": final.netloc,
+                "path": final.path,
+                "http_status": response.status_code,
+            },
+            "form": form,
+            "answer_instance_created": (
+                str(homework.get("answer_id") or "") in {"", "0"}
+                and str(form.get("answer_id") or after.get("answer_id") or "") not in {"", "0"}
+            ),
+            "postcondition": postcondition,
+            "verification": (
+                "reached the learner homework answer form for the selected work through HTTP; "
+                "no answer save or submit request was sent"
+            ),
+        }
+
+    def redo_learning_homework(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+    ) -> dict[str, Any]:
+        context = self._learning_homework_detail_context(course, homework_query)
+        homework = context["homework"]
+        detail = context["detail"]
+        if not detail["can_redo"]:
+            raise ChaoxingAPIError("learner homework does not currently expose a redo action")
+        if detail["redo_times_remaining"] is not None and detail["redo_times_remaining"] <= 0:
+            raise ChaoxingAPIError("learner homework has no remaining redo attempts")
+
+        values = parse_page_values(
+            str(context["html"]),
+            ("courseId", "classId", "cpi", "workId", "answerId"),
+        )
+        fallbacks = {
+            "courseId": course.get("course_id"),
+            "classId": course.get("clazz_id"),
+            "cpi": course.get("cpi"),
+            "workId": homework.get("work_id"),
+            "answerId": homework.get("answer_id"),
+        }
+        for key, fallback in fallbacks.items():
+            values[key] = values[key] or str(fallback or "")
+        missing = [key for key, value in values.items() if not str(value or "").strip()]
+        if missing:
+            raise ChaoxingAPIError(
+                "learner homework page does not expose redo context: " + ", ".join(missing)
+            )
+
+        endpoint = validated_chaoxing_url(
+            urljoin(str(context["response"].url), "/mooc-ans/work/phone/redo"),
+            "learner homework redo URL",
+        )
+        try:
+            response = context["session"].get(
+                endpoint,
+                params={
+                    "courseId": values["courseId"],
+                    "classId": values["classId"],
+                    "cpi": values["cpi"],
+                    "workId": values["workId"],
+                    "workAnswerId": values["answerId"],
+                },
+                timeout=max(self.timeout, 60),
+                headers={
+                    "Referer": str(context["response"].url),
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ChaoxingAPIError(
+                f"learner homework redo request failed: {type(exc).__name__}"
+            ) from exc
+        validated_chaoxing_url(response.url, "learner homework redo final URL")
+        try:
+            payload = json.loads(self._decode(response))
+        except json.JSONDecodeError as exc:
+            raise ChaoxingAPIError("learner homework redo response was not JSON") from exc
+        status = payload.get("status") if isinstance(payload, dict) else None
+        if str(status).strip().casefold() not in {"1", "true"}:
+            message = payload.get("msg") if isinstance(payload, dict) else ""
+            raise ChaoxingAPIError(str(message or "learner homework redo was not acknowledged"))
+
+        answer = self.enter_learning_homework_answer(
+            course,
+            str(homework["work_id"]),
+            _detail_context=context,
+            _redo_acknowledged=True,
+        )
+        if answer["form"]["work_id"] != homework["work_id"]:
+            raise ChaoxingAPIError(
+                "learner homework redo was acknowledged, but the answer form did not match"
+            )
+        final = urlparse(response.url)
+        return {
+            **self._learning_course_result(course),
+            "homework": self._public_learning_homework(homework),
+            "redo_times_before": detail["redo_times_remaining"],
+            "server_message": str(payload.get("msg") or ""),
+            "redo_request": {
+                "host": final.netloc,
+                "path": final.path,
+                "http_status": response.status_code,
+            },
+            "answer": answer,
+            "verification": (
+                "Chaoxing acknowledged the redo request and the selected homework then reached "
+                "a matching answer form; no answer save or submit request was sent"
             ),
         }
 

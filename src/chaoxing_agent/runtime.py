@@ -1334,6 +1334,20 @@ class ActionRuntime:
                 course,
                 self._required(parameters, "homework"),
             )
+        if action == "learning.course.homework.answer.enter":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.enter_learning_homework_answer(
+                course,
+                self._required(parameters, "homework"),
+            )
+        if action == "learning.course.homework.redo":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.redo_learning_homework(
+                course,
+                self._required(parameters, "homework"),
+            )
         if action == "learning.course.homework.attempts.list":
             api = self._api()
             course = api.get_learning_course(self._required(parameters, "course"))
@@ -4862,6 +4876,11 @@ class ActionRuntime:
 
     @staticmethod
     def _confirmation_summary(action: str, parameters: dict[str, Any]) -> str:
+        if action == "learning.course.homework.redo":
+            return (
+                f"重做我学课程 {parameters.get('course')} 的作业 {parameters.get('homework')}；"
+                "上一份作答记录会被覆盖，最终成绩以本次作答为准"
+            )
         if action == "learning.course.integrity.accept":
             return (
                 "代表当前学习通账号签署我学课程 "

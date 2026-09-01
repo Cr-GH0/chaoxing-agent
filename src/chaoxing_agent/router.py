@@ -5324,6 +5324,45 @@ def route_command(command: str) -> CommandPlan:
                 missing_fields=[] if quoted else ["course"],
                 message="请用书名号提供要查看 AI 工具的课程。" if not quoted else "",
             )
+        if "作业" in text and re.search(r"重做|重新作答|再次作答", text):
+            parameters: dict[str, object] = {}
+            if quoted:
+                parameters["course"] = quoted[0]
+            operands = quoted[1:]
+            if operands and operands[0] == "作业":
+                operands = operands[1:]
+            if operands:
+                parameters["homework"] = operands[0]
+            missing = [key for key in ("course", "homework") if key not in parameters]
+            return CommandPlan(
+                text,
+                "learning.course.homework.redo",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程和要重做的作业。" if missing else "",
+            )
+        if "作业" in text and re.search(
+            r"(?:进入|开始|继续|修改).{0,10}(?:作答|答题)|(?:开始|继续)作业",
+            text,
+        ):
+            parameters: dict[str, object] = {}
+            if quoted:
+                parameters["course"] = quoted[0]
+            operands = quoted[1:]
+            if operands and operands[0] == "作业":
+                operands = operands[1:]
+            if operands:
+                parameters["homework"] = operands[0]
+            missing = [key for key in ("course", "homework") if key not in parameters]
+            return CommandPlan(
+                text,
+                "learning.course.homework.answer.enter",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程和要进入答题的作业。" if missing else "",
+            )
         if "作业" in text and re.search(
             r"作答记录|答题记录|作答历史|答题历史|历史答案|历次作答",
             text,

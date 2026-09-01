@@ -201,6 +201,8 @@ async def test_mcp_exposes_semantic_tools() -> None:
         "chaoxing_list_learning_discussions",
         "chaoxing_list_learning_homeworks",
         "chaoxing_read_learning_homework",
+        "chaoxing_enter_learning_homework_answer",
+        "chaoxing_redo_learning_homework",
         "chaoxing_list_learning_homework_attempts",
         "chaoxing_read_learning_homework_attempt",
         "chaoxing_list_learning_exams",

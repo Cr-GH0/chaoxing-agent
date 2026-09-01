@@ -1486,6 +1486,21 @@ def build_parser() -> argparse.ArgumentParser:
     learning_homework_read.add_argument("course")
     learning_homework_read.add_argument("homework")
 
+    learning_homework_answer_enter = sub.add_parser(
+        "learning-homework-answer-enter",
+        help="enter a learner homework answer form without saving or submitting",
+    )
+    learning_homework_answer_enter.add_argument("course")
+    learning_homework_answer_enter.add_argument("homework")
+
+    learning_homework_redo = sub.add_parser(
+        "learning-homework-redo",
+        help="redo learner homework after an action-bound confirmation",
+    )
+    learning_homework_redo.add_argument("course")
+    learning_homework_redo.add_argument("homework")
+    learning_homework_redo.add_argument("--confirmation-token")
+
     learning_homework_attempts = sub.add_parser(
         "learning-homework-attempts",
         help="list learner homework answer records without opening an attempt",
@@ -5804,6 +5819,17 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
         return await runtime.execute(
             "learning.course.homework.read",
             {"course": args.course, "homework": args.homework},
+        )
+    if args.command == "learning-homework-answer-enter":
+        return await runtime.execute(
+            "learning.course.homework.answer.enter",
+            {"course": args.course, "homework": args.homework},
+        )
+    if args.command == "learning-homework-redo":
+        return await runtime.execute(
+            "learning.course.homework.redo",
+            {"course": args.course, "homework": args.homework},
+            confirmation_token=args.confirmation_token,
         )
     if args.command == "learning-homework-attempts":
         return await runtime.execute(
