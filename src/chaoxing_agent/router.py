@@ -356,13 +356,32 @@ def route_command(command: str) -> CommandPlan:
     ):
         quoted = _extract_quoted(text)
         parameters: dict[str, str] = {}
-        if quoted:
-            parameters["username"] = quoted[0]
-        if len(quoted) >= 2:
-            parameters["password"] = quoted[1]
+        account_match = re.search(
+            r"(?:账号|用户名|手机号)(?:为|是|：|:)?\s*[《“\"']([^》”\"']+)[》”\"']",
+            text,
+        )
+        password_match = re.search(
+            r"密码(?:为|是|：|:)?\s*[《“\"']([^》”\"']+)[》”\"']",
+            text,
+        )
+        course_match = re.search(
+            r"(?:课程|课)(?:为|是|：|:)?\s*[《“\"']([^》”\"']+)[》”\"']",
+            text,
+        )
+        if account_match:
+            parameters["username"] = account_match.group(1)
+        if password_match:
+            parameters["password"] = password_match.group(1)
         target_match = re.search(r"https://[^\s》”\"']+", text, flags=re.I)
         if target_match:
             parameters["target_url"] = target_match.group(0).rstrip("，。；;,.)）]")
+        elif course_match and re.search(r"直播课|见面课|直播", text):
+            parameters["learning_course"] = course_match.group(1)
+            parameters["learning_module"] = "直播课/见面课"
+        if "username" not in parameters and not course_match and quoted:
+            parameters["username"] = quoted[0]
+        if "password" not in parameters and not course_match and len(quoted) >= 2:
+            parameters["password"] = quoted[1]
         missing = [key for key in ("username", "password") if key not in parameters]
         return CommandPlan(
             text,

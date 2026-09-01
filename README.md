@@ -68,6 +68,14 @@ uv run chaoxing-agent login --username "您的学习通账号"
 uv run chaoxing-agent login --username "您的学习通账号" --target-url "https://xueyinonline.chaoxing.com/..."
 ```
 
+对于学生课程模块，优先按课程名解析目标，代理无需读取或传递带签名的地址：
+
+```powershell
+uv run chaoxing-agent login --username "您的学习通账号" --learning-course "课程名" --learning-module "直播课/见面课"
+```
+
+该方式需要当前 Cookie 至少仍能读取“我学的课”，以便在内存中选定课程和模块；如果主会话也已过期，先执行一次普通 `login`，再执行上述目标登录。
+
 检查会话：
 
 ```powershell

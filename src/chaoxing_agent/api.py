@@ -20008,6 +20008,19 @@ class ChaoxingAPI:
             "verification": "authenticated student-role course HTML parsed through HTTP",
         }
 
+    def resolve_learning_course_module_login_target(
+        self,
+        course_query: str,
+        module_query: str,
+    ) -> tuple[dict[str, Any], dict[str, str], str]:
+        """Resolve a signed learner-module URL for immediate in-memory login use."""
+        course = self.get_learning_course(course_query)
+        context = self._learning_course_context(self._session(), course)
+        module = resolve_module(context["modules"], module_query)
+        target_url = self._learning_module_url(context, module)
+        validated_chaoxing_url(target_url, "learning-course login target URL")
+        return course, module, target_url
+
     def _learning_module_response(
         self,
         course: dict[str, Any],

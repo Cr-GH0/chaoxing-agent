@@ -354,6 +354,56 @@ def test_cross_application_login_redirect_preserves_existing_cookie_file(
     assert cookie_file.read_text(encoding="utf-8") == original
 
 
+def test_learning_course_module_login_target_is_resolved_only_in_memory(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    api = ChaoxingAPI(tmp_path / "session.json")
+    course = {
+        "course_id": "265813684",
+        "course_name": "测试课程",
+        "clazz_id": "123456789",
+        "cpi": "987654321",
+    }
+    context = {
+        "final_url": "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu",
+        "values": {
+            "courseid": course["course_id"],
+            "clazzid": course["clazz_id"],
+            "cpi": course["cpi"],
+            "t": "true",
+            "enc": "student-secret",
+        },
+        "modules": [
+            {
+                "module": "zb_jm",
+                "label": "直播课/见面课",
+                "data_url": (
+                    "https://xueyinonline.chaoxing.com/schoolcourseInfo/"
+                    "teachingclassmanage/livecoursenew"
+                ),
+            }
+        ],
+    }
+    monkeypatch.setattr(api, "get_learning_course", lambda _query: course)
+    monkeypatch.setattr(api, "_session", lambda: object())
+    monkeypatch.setattr(api, "_learning_course_context", lambda _session, _course: context)
+
+    selected_course, module, target_url = api.resolve_learning_course_module_login_target(
+        "测试课程",
+        "直播课/见面课",
+    )
+
+    assert selected_course == course
+    assert module["module"] == "zb_jm"
+    assert target_url.startswith(
+        "https://xueyinonline.chaoxing.com/schoolcourseInfo/teachingclassmanage/livecoursenew?"
+    )
+    assert "courseId=265813684" in target_url
+    assert "classId=123456789" in target_url
+    assert "stuenc=student-secret" in target_url
+
+
 def test_subject_creation_listing_normalizes_folders_subjects_and_recycle_flags(
     monkeypatch,
 ) -> None:

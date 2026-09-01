@@ -11,6 +11,8 @@ async def test_mcp_exposes_semantic_tools() -> None:
     names = {tool.name for tool in listing.tools}
     login_tool = next(tool for tool in listing.tools if tool.name == "chaoxing_login")
     assert "target_url" in login_tool.input_schema["properties"]
+    assert "learning_course" in login_tool.input_schema["properties"]
+    assert "learning_module" in login_tool.input_schema["properties"]
     assert {
         "chaoxing_capabilities",
         "chaoxing_check_session",

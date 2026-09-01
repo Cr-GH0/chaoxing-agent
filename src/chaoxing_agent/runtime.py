@@ -76,17 +76,40 @@ class ActionRuntime:
         if action == "session.check":
             return self._api().check_session()
         if action == "session.login":
+            username = self._required(parameters, "username")
+            password = self._required(parameters, "password")
+            api = self._api()
             login_options: dict[str, Any] = {
                 "fid": str(parameters.get("fid") or "-1"),
             }
             target_url = str(parameters.get("target_url") or "").strip()
+            learning_course = str(parameters.get("learning_course") or "").strip()
+            learning_module = str(parameters.get("learning_module") or "直播课/见面课").strip()
+            target_context: dict[str, str] | None = None
+            if target_url and learning_course:
+                raise ActionRuntimeError("target_url and learning_course cannot be used together")
+            if learning_course:
+                course, module, target_url = api.resolve_learning_course_module_login_target(
+                    learning_course,
+                    learning_module,
+                )
+                target_context = {
+                    "course_id": str(course.get("course_id") or ""),
+                    "course_name": str(course.get("course_name") or ""),
+                    "clazz_id": str(course.get("clazz_id") or ""),
+                    "module": str(module.get("module") or ""),
+                    "module_label": str(module.get("label") or ""),
+                }
             if target_url:
                 login_options["target_url"] = target_url
-            return self._api().login(
-                self._required(parameters, "username"),
-                self._required(parameters, "password"),
+            result = api.login(
+                username,
+                password,
                 **login_options,
             )
+            if target_context is not None:
+                result["target_context"] = target_context
+            return result
         if action == "space.modules.discover":
             return self._api().list_personal_space_modules()
         if action == "space.module.open":

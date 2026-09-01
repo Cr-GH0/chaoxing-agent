@@ -120,10 +120,21 @@ def build_parser() -> argparse.ArgumentParser:
     login = sub.add_parser("login", help="log in through HTTP and atomically save cookies")
     login.add_argument("--username", help="account or phone; otherwise env or prompt")
     login.add_argument("--fid", default="-1", help="institution id; default: -1")
-    login.add_argument(
+    login_target = login.add_mutually_exclusive_group()
+    login_target.add_argument(
         "--target-url",
         default="",
         help="optional HTTPS chaoxing.com page to verify after cross-application SSO",
+    )
+    login_target.add_argument(
+        "--learning-course",
+        default="",
+        help="resolve a signed learner-course module target without exposing its URL",
+    )
+    login.add_argument(
+        "--learning-module",
+        default="直播课/见面课",
+        help="learner-course module used with --learning-course",
     )
     sub.add_parser("space-modules", help="discover current personal-space function entries")
     space_module = sub.add_parser(
@@ -4418,6 +4429,8 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
                 "password": password,
                 "fid": args.fid,
                 "target_url": args.target_url,
+                "learning_course": args.learning_course,
+                "learning_module": args.learning_module,
             },
         )
     if args.command == "space-modules":

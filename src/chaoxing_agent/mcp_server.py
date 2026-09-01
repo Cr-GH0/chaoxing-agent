@@ -40,11 +40,16 @@ async def chaoxing_login(
     password: str,
     fid: str = "-1",
     target_url: str = "",
+    learning_course: str = "",
+    learning_module: str = "直播课/见面课",
 ) -> dict[str, Any]:
-    """Log in through HTTP, optionally verifying a Chaoxing cross-application target."""
+    """Log in through HTTP using an optional URL or signed learner-course module target."""
     parameters = {"username": username, "password": password, "fid": fid}
     if target_url:
         parameters["target_url"] = target_url
+    if learning_course:
+        parameters["learning_course"] = learning_course
+        parameters["learning_module"] = learning_module
     return await runtime.execute(
         "session.login",
         parameters,

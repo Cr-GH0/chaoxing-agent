@@ -14,6 +14,12 @@ def test_route_http_login_with_and_without_credentials() -> None:
         "登录学习通账号《13800138000》密码《secret-value》，并验证 "
         "https://xueyinonline.chaoxing.com/livecoursenew?courseId=1"
     )
+    learning_targeted = route_command(
+        "登录学习通账号《13800138000》密码《secret-value》，进入课程《测试课程》的直播课"
+    )
+    learning_targeted_missing_credentials = route_command(
+        "登录学习通并进入课程《测试课程》的直播课"
+    )
     assert incomplete.action == "session.login"
     assert incomplete.missing_fields == ["username", "password"]
     assert complete.action == "session.login"
@@ -24,6 +30,14 @@ def test_route_http_login_with_and_without_credentials() -> None:
         "https://xueyinonline.chaoxing.com/livecoursenew?courseId=1"
     )
     assert targeted.missing_fields == []
+    assert learning_targeted.parameters["learning_course"] == "测试课程"
+    assert learning_targeted.parameters["learning_module"] == "直播课/见面课"
+    assert learning_targeted.missing_fields == []
+    assert learning_targeted_missing_credentials.parameters == {
+        "learning_course": "测试课程",
+        "learning_module": "直播课/见面课",
+    }
+    assert learning_targeted_missing_credentials.missing_fields == ["username", "password"]
 
 
 def test_route_job_ability_public_search_catalog_and_industry_actions() -> None:

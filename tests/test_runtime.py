@@ -73,6 +73,78 @@ async def test_runtime_dispatches_cross_application_login_target(monkeypatch) ->
 
 
 @pytest.mark.asyncio
+async def test_runtime_resolves_learning_module_login_target_without_exposing_url(
+    monkeypatch,
+) -> None:
+    class LearningTargetLoginAPI:
+        def __init__(self) -> None:
+            self.target_url = ""
+
+        @staticmethod
+        def resolve_learning_course_module_login_target(course: str, module: str):
+            assert course == "测试课程"
+            assert module == "直播课/见面课"
+            return (
+                {
+                    "course_id": "265813684",
+                    "course_name": "测试课程",
+                    "clazz_id": "123456789",
+                },
+                {"module": "zb_jm", "label": "直播课/见面课"},
+                "https://xueyinonline.chaoxing.com/livecoursenew?stuenc=secret-value",
+            )
+
+        def login(self, _username: str, _password: str, **kwargs):
+            self.target_url = kwargs["target_url"]
+            return {
+                "logged_in": True,
+                "target": {"target_reached": True},
+                "cookies_saved": 2,
+            }
+
+    runtime = ActionRuntime(Settings(cookie_file=Path("session.json"), request_timeout=20.0))
+    api = LearningTargetLoginAPI()
+    monkeypatch.setattr(runtime, "_api", lambda: api)
+
+    result = await runtime.execute(
+        "session.login",
+        {
+            "username": "account",
+            "password": "private-password",
+            "learning_course": "测试课程",
+            "learning_module": "直播课/见面课",
+        },
+    )
+
+    assert "stuenc=secret-value" in api.target_url
+    assert result["result"]["target_context"] == {
+        "course_id": "265813684",
+        "course_name": "测试课程",
+        "clazz_id": "123456789",
+        "module": "zb_jm",
+        "module_label": "直播课/见面课",
+    }
+    assert "secret-value" not in str(result)
+
+
+@pytest.mark.asyncio
+async def test_runtime_rejects_raw_and_semantic_login_targets_together(monkeypatch) -> None:
+    runtime = ActionRuntime(Settings(cookie_file=Path("session.json"), request_timeout=20.0))
+    monkeypatch.setattr(runtime, "_api", LoginAPI)
+
+    with pytest.raises(ActionRuntimeError, match="cannot be used together"):
+        await runtime.execute(
+            "session.login",
+            {
+                "username": "account",
+                "password": "private-password",
+                "target_url": "https://xueyinonline.chaoxing.com/livecoursenew",
+                "learning_course": "测试课程",
+            },
+        )
+
+
+@pytest.mark.asyncio
 async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypatch) -> None:
     class LearningAPI:
         def __init__(self) -> None:

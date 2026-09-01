@@ -111,6 +111,19 @@ def test_login_cli_accepts_username_and_fid_without_password_argument() -> None:
     assert login.username == "13800138000"
     assert login.fid == "23080"
     assert login.target_url == target_url
+    learning_login = parser.parse_args(
+        [
+            "login",
+            "--username",
+            "13800138000",
+            "--learning-course",
+            "测试课程",
+            "--learning-module",
+            "直播课/见面课",
+        ]
+    )
+    assert learning_login.learning_course == "测试课程"
+    assert learning_login.learning_module == "直播课/见面课"
     login_action = next(action for action in parser._actions if action.dest == "command")
     login_parser = login_action.choices["login"]
     assert all(action.dest != "password" for action in login_parser._actions)
