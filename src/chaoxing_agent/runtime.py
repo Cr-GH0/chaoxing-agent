@@ -1250,6 +1250,31 @@ class ActionRuntime:
             return {"count": len(courses), "courses": courses}
         if action == "courses.list_classes":
             return self._api().list_classes(self._required(parameters, "course"))
+        if action == "learning.courses.list":
+            courses = self._api().list_learning_courses(
+                search=str(parameters.get("search") or ""),
+                folder=str(parameters.get("folder") or "0"),
+            )
+            return {"count": len(courses), "courses": courses}
+        if action == "learning.course.modules.discover":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.discover_learning_course_modules(course)
+        if action == "learning.course.module.open":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.inspect_learning_course_module(
+                course,
+                self._required(parameters, "module"),
+            )
+        if action == "learning.course.integrity.read":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.read_learning_integrity(course)
+        if action == "learning.course.integrity.accept":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.accept_learning_integrity(course)
         if action == "classes.create":
             api = self._api()
             course = api.get_course(self._required(parameters, "course"))
@@ -4687,6 +4712,12 @@ class ActionRuntime:
 
     @staticmethod
     def _confirmation_summary(action: str, parameters: dict[str, Any]) -> str:
+        if action == "learning.course.integrity.accept":
+            return (
+                "代表当前学习通账号签署我学课程 "
+                f"{parameters.get('course')} 的《在线学习诚信承诺书》；"
+                "该操作会改变平台上的承诺状态"
+            )
         if action == "subjects.folder.delete":
             suffix = "，并允许非空目录" if parameters.get("allow_nonempty") else ""
             return f"删除专题创作文件夹 {parameters.get('folder')}{suffix}"

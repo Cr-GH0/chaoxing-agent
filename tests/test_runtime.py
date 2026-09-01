@@ -32,6 +32,73 @@ async def test_runtime_dispatches_http_login_without_echoing_parameters(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypatch) -> None:
+    class LearningAPI:
+        def __init__(self) -> None:
+            self.accepted = False
+
+        @staticmethod
+        def list_learning_courses(**kwargs):
+            return [{"course_id": "254641935", "course_name": "英语文体与写作", **kwargs}]
+
+        @staticmethod
+        def get_learning_course(course):
+            return {
+                "course_id": "254641935",
+                "course_name": course,
+                "clazz_id": "125867890",
+            }
+
+        @staticmethod
+        def discover_learning_course_modules(course):
+            return {"course": course, "modules": [{"label": "章节"}]}
+
+        @staticmethod
+        def inspect_learning_course_module(course, module):
+            return {"course": course, "module": module, "title": "章节学习"}
+
+        @staticmethod
+        def read_learning_integrity(course):
+            return {"course": course, "commitment": {"required": True}}
+
+        def accept_learning_integrity(self, course):
+            self.accepted = True
+            return {"course": course, "changed": True}
+
+    runtime = ActionRuntime(Settings(cookie_file=Path("session.json"), request_timeout=20.0))
+    api = LearningAPI()
+    monkeypatch.setattr(runtime, "_api", lambda: api)
+
+    listing = await runtime.execute("learning.courses.list", {"search": "英语"})
+    modules = await runtime.execute(
+        "learning.course.modules.discover", {"course": "英语文体与写作"}
+    )
+    opened = await runtime.execute(
+        "learning.course.module.open",
+        {"course": "英语文体与写作", "module": "章节"},
+    )
+    integrity = await runtime.execute(
+        "learning.course.integrity.read", {"course": "英语文体与写作"}
+    )
+    preview = await runtime.execute(
+        "learning.course.integrity.accept", {"course": "英语文体与写作"}
+    )
+    confirmed = await runtime.execute(
+        "learning.course.integrity.accept",
+        {"course": "英语文体与写作"},
+        preview["confirmation"]["token"],
+    )
+
+    assert listing["result"]["count"] == 1
+    assert modules["result"]["modules"][0]["label"] == "章节"
+    assert opened["result"]["title"] == "章节学习"
+    assert integrity["result"]["commitment"]["required"] is True
+    assert preview["status"] == "confirmation_required"
+    assert "签署" in preview["confirmation"]["summary"]
+    assert confirmed["status"] == "ok" and api.accepted is True
+
+
+@pytest.mark.asyncio
 async def test_runtime_dispatches_job_ability_search_catalog_and_industry(monkeypatch) -> None:
     class JobAbilityAPI:
         @staticmethod

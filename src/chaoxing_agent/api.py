@@ -12,7 +12,7 @@ from html import escape, unescape
 from pathlib import Path
 from time import monotonic, sleep
 from typing import Any
-from urllib.parse import parse_qs, quote, unquote, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, parse_qsl, quote, unquote, urlencode, urljoin, urlparse
 from uuid import uuid4
 
 import requests
@@ -27,6 +27,8 @@ BACKCLAZZ_URL = "https://mooc1-api.chaoxing.com/mycourse/backclazzdata?view=json
 COURSE_ENTRY_URL = "https://mooc1.chaoxing.com/course/isNewCourse"
 MOOC1_BASE_URL = "https://mooc1.chaoxing.com"
 MOOC2_BASE_URL = "https://mooc2-ans.chaoxing.com"
+LEARNING_COURSE_LIST_URL = MOOC2_BASE_URL + "/mooc2-ans/visit/courselistdata"
+LEARNING_INTEGRITY_UPDATE_URL = MOOC2_BASE_URL + "/mooc2-ans/mycourse/update-person-status"
 UPLOAD_BASE_URL = "https://mooc1.chaoxing.com/upload-ans"
 NOTICE_LIST_URL = "https://notice.chaoxing.com/pc/course/notice/getNoticeList"
 NOTICE_DRAFT_LIST_URL = "https://notice.chaoxing.com/pc/draft/notice/getNoticeDrafts"
@@ -545,9 +547,64 @@ def append_query_params(url: str, params: dict[str, Any]) -> str:
     return parsed._replace(query=query).geturl()
 
 
+def append_missing_query_params(url: str, params: dict[str, Any]) -> str:
+    """Append only absent query keys, matching the course-page JavaScript."""
+
+    parsed = urlparse(url)
+    existing = parse_qs(parsed.query, keep_blank_values=True)
+    additions = {
+        key: value
+        for key, value in params.items()
+        if key not in existing and value is not None and str(value) != ""
+    }
+    if not additions:
+        return url
+    encoded = urlencode(additions)
+    query = parsed.query + ("&" if parsed.query else "") + encoded
+    return parsed._replace(query=query).geturl()
+
+
 def query_value(url: str, name: str) -> str:
     values = parse_qs(urlparse(url).query).get(name, [])
     return values[0] if values else ""
+
+
+def redact_url_query_values(url: str, names: set[str]) -> str:
+    parsed = urlparse(url)
+    sensitive = {name.casefold() for name in names}
+    pairs = [
+        (key, "[redacted]" if key.casefold() in sensitive and value else value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+    ]
+    return parsed._replace(query=urlencode(pairs)).geturl()
+
+
+def parse_page_values(html: str, names: tuple[str, ...]) -> dict[str, str]:
+    """Read selected bootstrap values from hidden inputs or simple JS assignments."""
+
+    hidden = parse_hidden_inputs(html)
+    hidden_casefolded = {key.casefold(): value for key, value in hidden.items()}
+    values: dict[str, str] = {}
+    for name in names:
+        raw = hidden.get(name)
+        if raw is None:
+            raw = hidden_casefolded.get(name.casefold())
+        if raw is None:
+            match = re.search(
+                rf"(?:\b(?:var|let|const)\s+|\bwindow\.){re.escape(name)}\s*=\s*"
+                r"(?P<value>[^;\r\n]+)",
+                html,
+                flags=re.IGNORECASE,
+            )
+            raw = match.group("value").strip() if match else ""
+        normalized = str(raw or "").strip()
+        if len(normalized) >= 2 and normalized[0] in {"'", '"'}:
+            if normalized[-1] == normalized[0]:
+                normalized = normalized[1:-1]
+        if normalized.lower() in {"null", "undefined"}:
+            normalized = ""
+        values[name] = unescape(normalized)
+    return values
 
 
 def parse_teacher_nav_items(html: str) -> list[dict[str, str]]:
@@ -577,6 +634,13 @@ def parse_teacher_nav_items(html: str) -> list[dict[str, str]]:
                 "open_type": li_attrs.get("opentype", ""),
             }
         )
+    return items
+
+
+def parse_learning_nav_items(html: str) -> list[dict[str, str]]:
+    items = parse_teacher_nav_items(html)
+    for item in items:
+        item["label"] = re.sub(r"(?:\s|\u200b)*NEW\s*$", "", item["label"]).strip()
     return items
 
 
@@ -6553,6 +6617,172 @@ def parse_teaching_courses(data: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return courses
+
+
+def parse_learning_courses(html: str) -> list[dict[str, Any]]:
+    """Parse the current account's student-role course cards.
+
+    The student course list is rendered as nested ``div`` cards rather than a
+    JSON API.  We first identify top-level card starts by the stable
+    ``learnCourse`` class and ``c_<course id>`` element ID, then parse each
+    bounded slice.  This avoids depending on presentation-only whitespace or
+    exact nested markup.
+    """
+
+    starts: list[tuple[int, dict[str, str]]] = []
+    for match in re.finditer(r"<div\b[^>]*>", str(html or ""), flags=re.IGNORECASE | re.DOTALL):
+        attrs = html_attrs(match.group(0))
+        classes = {value.casefold() for value in attrs.get("class", "").split()}
+        if "learncourse" not in classes or not attrs.get("id", "").startswith("c_"):
+            continue
+        starts.append((match.start(), attrs))
+
+    courses: list[dict[str, Any]] = []
+    for position, (start, card_attrs) in enumerate(starts):
+        end = starts[position + 1][0] if position + 1 < len(starts) else len(html)
+        block = html[start:end]
+        inputs: list[dict[str, str]] = [
+            html_attrs(match.group(0))
+            for match in re.finditer(r"<input\b[^>]*>", block, flags=re.IGNORECASE | re.DOTALL)
+        ]
+
+        def input_value(
+            *names: str,
+            source_inputs: tuple[dict[str, str], ...] = tuple(inputs),
+        ) -> str:
+            expected = {name.casefold() for name in names}
+            for attrs in source_inputs:
+                identifiers = {
+                    attrs.get("name", "").casefold(),
+                    attrs.get("id", "").casefold(),
+                    *{value.casefold() for value in attrs.get("class", "").split()},
+                }
+                if expected & identifiers:
+                    return str(attrs.get("value") or "").strip()
+            return ""
+
+        anchor_match = re.search(
+            r"<a\b(?P<attrs>[^>]*)>",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        entry_url = ""
+        for candidate in re.finditer(
+            r"<a\b(?P<attrs>[^>]*)>", block, flags=re.IGNORECASE | re.DOTALL
+        ):
+            href = html_attrs(candidate.group("attrs")).get("href", "")
+            if "stucoursemiddle" in href:
+                anchor_match = candidate
+                entry_url = href.strip()
+                break
+        if not entry_url and anchor_match:
+            entry_url = html_attrs(anchor_match.group("attrs")).get("href", "").strip()
+
+        name = ""
+        name_match = re.search(
+            r"<span\b(?P<attrs>[^>]*)>(?P<body>.*?)</span>",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        for candidate in re.finditer(
+            r"<span\b(?P<attrs>[^>]*)>(?P<body>.*?)</span>",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        ):
+            attrs = html_attrs(candidate.group("attrs"))
+            if "course-name" in attrs.get("class", "").casefold().split():
+                name_match = candidate
+                name = str(attrs.get("title") or html_text(candidate.group("body"))).strip()
+                break
+        if not name and name_match:
+            attrs = html_attrs(name_match.group("attrs"))
+            name = str(attrs.get("title") or html_text(name_match.group("body"))).strip()
+
+        teacher = ""
+        term = ""
+        for paragraph in re.finditer(
+            r"<p\b(?P<attrs>[^>]*)>(?P<body>.*?)</p>",
+            block,
+            flags=re.IGNORECASE | re.DOTALL,
+        ):
+            attrs = html_attrs(paragraph.group("attrs"))
+            text = html_text(paragraph.group("body"))
+            title = str(attrs.get("title") or "").strip()
+            if "开课时间" in text:
+                term = re.sub(r"^\s*开课时间\s*[：:]?\s*", "", text).strip()
+            elif not teacher and (title or "color3" in attrs.get("class", "").split()):
+                teacher = title or text
+
+        image_url = ""
+        image_match = re.search(r"<img\b[^>]*>", block, flags=re.IGNORECASE | re.DOTALL)
+        if image_match:
+            image_attrs = html_attrs(image_match.group(0))
+            image_url = str(
+                image_attrs.get("data-original")
+                or image_attrs.get("data-src")
+                or image_attrs.get("src")
+                or ""
+            ).strip()
+
+        course_id = input_value("courseId") or card_attrs.get("id", "")[2:]
+        clazz_id = input_value("clazzId")
+        cpi = input_value("curPersonId", "cpi")
+        role = input_value("role")
+        plain = html_text(block)
+        course = {
+            "index": len(courses) + 1,
+            "course_id": str(course_id).strip(),
+            "course_name": name,
+            "clazz_id": clazz_id,
+            "cpi": cpi,
+            "role": role or "0",
+            "teacher": teacher,
+            "term": term,
+            "entry_url": urljoin(MOOC2_BASE_URL, entry_url) if entry_url else "",
+            "image_url": urljoin(MOOC2_BASE_URL, image_url) if image_url else "",
+            "ended": bool(re.search(r"课程已结束|已结束课程", plain)),
+            "can_quit": "quitTheCourse(" in block or "退课" in plain,
+            "is_top": "取消置顶" in plain,
+        }
+        if course["course_id"] and course["clazz_id"] and course["entry_url"]:
+            courses.append(course)
+    return courses
+
+
+def resolve_learning_course(courses: list[dict[str, Any]], query: str) -> dict[str, Any]:
+    normalized = str(query or "").strip().casefold()
+    if not normalized:
+        raise ChaoxingAPIError("learning course name, course_id, clazz_id, or index is required")
+    exact = [
+        course
+        for course in courses
+        if normalized
+        in {
+            str(course.get("course_id") or "").casefold(),
+            str(course.get("clazz_id") or "").casefold(),
+            str(course.get("course_name") or "").strip().casefold(),
+            str(course.get("index") or ""),
+        }
+    ]
+    if len(exact) == 1:
+        return exact[0]
+    if len(exact) > 1:
+        raise ChaoxingAPIError(f"multiple exact learning-course matches: {query}")
+    partial = [
+        course
+        for course in courses
+        if normalized in str(course.get("course_name") or "").strip().casefold()
+        or normalized in str(course.get("teacher") or "").strip().casefold()
+    ]
+    if len(partial) == 1:
+        return partial[0]
+    if not partial:
+        raise ChaoxingAPIError(f"learning course not found: {query}")
+    candidates = ", ".join(
+        f"{course['index']}. {course['course_name']} ({course['course_id']}/{course['clazz_id']})"
+        for course in partial
+    )
+    raise ChaoxingAPIError(f"multiple learning-course matches: {candidates}")
 
 
 def resolve_course(courses: list[dict[str, Any]], query: str) -> dict[str, Any]:
@@ -18954,6 +19184,386 @@ class ChaoxingAPI:
 
     def get_course(self, query: str) -> dict[str, Any]:
         return resolve_course(self.list_teaching_courses(), query)
+
+    def list_learning_courses(
+        self,
+        *,
+        search: str = "",
+        folder: str = "0",
+    ) -> list[dict[str, Any]]:
+        session, landing, _module = self._personal_space_module_context("课程教学")
+        landing_html = self._decode(landing)
+        hidden = parse_hidden_inputs(landing_html)
+        try:
+            response = session.post(
+                LEARNING_COURSE_LIST_URL,
+                data={
+                    "courseType": "1",
+                    "courseFolderId": str(folder or "0"),
+                    "query": str(search or "").strip(),
+                    "pageHeader": "-1",
+                    "single": "0",
+                    "superstarClass": "0",
+                    "isFirefly": "0",
+                    "fid": str(hidden.get("fid") or ""),
+                },
+                timeout=self.timeout,
+                headers={
+                    "Referer": landing.url,
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ChaoxingAPIError(f"learning-course list request failed: {exc}") from exc
+        if "passport2.chaoxing.com/login" in response.url.lower():
+            raise ChaoxingAPIError("Chaoxing learning-course login has expired")
+        html = self._decode(response)
+        if "passport2.chaoxing.com/login" in html.lower():
+            raise ChaoxingAPIError("Chaoxing learning-course response was a login page")
+        courses = parse_learning_courses(html)
+        normalized_search = str(search or "").strip().casefold()
+        if normalized_search:
+            courses = [
+                course
+                for course in courses
+                if normalized_search in str(course.get("course_name") or "").casefold()
+                or normalized_search in str(course.get("teacher") or "").casefold()
+            ]
+            for index, course in enumerate(courses, 1):
+                course["index"] = index
+        return courses
+
+    def get_learning_course(self, query: str) -> dict[str, Any]:
+        return resolve_learning_course(self.list_learning_courses(), query)
+
+    def _learning_course_context(
+        self,
+        session: requests.Session,
+        course: dict[str, Any],
+    ) -> dict[str, Any]:
+        entry_url = validated_chaoxing_url(
+            str(course.get("entry_url") or ""), "learning-course entry URL"
+        )
+        try:
+            response = session.get(
+                entry_url,
+                timeout=self.timeout,
+                allow_redirects=True,
+                headers={"Referer": MOOC2_BASE_URL + "/mooc2-ans/visit/interaction"},
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ChaoxingAPIError(f"learning-course request failed: {exc}") from exc
+        if "passport2.chaoxing.com/login" in response.url.lower():
+            raise ChaoxingAPIError("Chaoxing learning-course login has expired")
+        html = self._decode(response)
+        value_names = (
+            "courseid",
+            "clazzid",
+            "cpi",
+            "personid",
+            "bbsid",
+            "oldenc",
+            "enc",
+            "cfid",
+            "t",
+            "workEnc",
+            "examEnc",
+            "openc",
+            "courseApp",
+            "bbsUrlSwitch",
+            "hideHead",
+            "notAgreeCommitment",
+            "notAgreeCourseCommitment",
+        )
+        values = parse_page_values(html, value_names)
+        for key, query_name in (
+            ("courseid", "courseid"),
+            ("clazzid", "clazzid"),
+            ("cpi", "cpi"),
+            ("enc", "enc"),
+            ("openc", "openc"),
+        ):
+            if not values[key]:
+                values[key] = query_value(response.url, query_name)
+        values["courseid"] = values["courseid"] or str(course.get("course_id") or "")
+        values["clazzid"] = values["clazzid"] or str(course.get("clazz_id") or "")
+        values["cpi"] = values["cpi"] or str(course.get("cpi") or "")
+        values["personid"] = values["personid"] or values["cpi"]
+        return {
+            "entry_url": entry_url,
+            "final_url": response.url,
+            "http_status": response.status_code,
+            "html": html,
+            "values": values,
+            "modules": parse_learning_nav_items(html),
+        }
+
+    @staticmethod
+    def _learning_module_url(context: dict[str, Any], item: dict[str, str]) -> str:
+        values = context.get("values") if isinstance(context.get("values"), dict) else {}
+        module = str(item.get("module") or "")
+        base_url = urljoin(str(context.get("final_url") or ""), str(item.get("data_url") or ""))
+        course_id = str(values.get("courseid") or "")
+        clazz_id = str(values.get("clazzid") or "")
+        cpi = str(values.get("cpi") or "")
+        t = str(values.get("t") or "")
+
+        if module == "ai_workbench":
+            url = base_url
+        elif module in {"zy", "zb_jm", "bjexpand"}:
+            url = append_missing_query_params(
+                base_url,
+                {
+                    "courseId": course_id,
+                    "classId": clazz_id,
+                    "cpi": cpi,
+                    "ut": "s",
+                },
+            )
+        else:
+            url = append_missing_query_params(
+                base_url,
+                {
+                    "courseid": course_id,
+                    "clazzid": clazz_id,
+                    "cpi": cpi,
+                    "ut": "s",
+                    "t": t,
+                },
+            )
+
+        url = append_missing_query_params(
+            url,
+            {
+                "cpi": cpi,
+                "t": t,
+                "stuenc": str(values.get("enc") or ""),
+            },
+        )
+        if module == "hd":
+            url = append_missing_query_params(url, {"fid": str(values.get("cfid") or "")})
+        elif module == "tl":
+            url = append_missing_query_params(
+                url,
+                {
+                    "bbsid": str(values.get("bbsid") or ""),
+                    "enc": str(values.get("enc") or ""),
+                    "openc": str(values.get("openc") or ""),
+                    "hideHead": str(values.get("hideHead") or ""),
+                },
+            )
+        elif module == "zj":
+            url = append_missing_query_params(url, {"pageHeader": "1"})
+        elif module == "zl":
+            url = append_missing_query_params(url, {"pageHeader": "3"})
+        elif module == "ctj":
+            url = append_missing_query_params(url, {"pageHeader": "4"})
+        elif module == "zc":
+            url = append_missing_query_params(
+                url,
+                {
+                    "enc": str(values.get("examEnc") or ""),
+                    "openc": str(values.get("openc") or ""),
+                    "type": "1",
+                },
+            )
+        elif module == "cj":
+            url = append_missing_query_params(url, {"pageHeader": "6"})
+        elif module == "zy":
+            url = append_missing_query_params(url, {"enc": str(values.get("workEnc") or "")})
+        elif module == "ks":
+            url = append_missing_query_params(
+                url,
+                {
+                    "enc": str(values.get("examEnc") or ""),
+                    "openc": str(values.get("openc") or ""),
+                },
+            )
+        elif module == "zsd":
+            url = append_missing_query_params(
+                url,
+                {"openType": "1", "enc": str(values.get("oldenc") or "")},
+            )
+        elif module == "ai_workbench":
+            url = append_missing_query_params(url, {"pageHeader": "21"})
+        return url
+
+    def discover_learning_course_modules(self, course: dict[str, Any]) -> dict[str, Any]:
+        context = self._learning_course_context(self._session(), course)
+        public_modules = [
+            {
+                **item,
+                "data_url": redact_url_query_values(
+                    str(item.get("data_url") or ""),
+                    {"enc", "stuenc", "openc", "workEnc", "examEnc", "token"},
+                ),
+            }
+            for item in context["modules"]
+        ]
+        return {
+            "course_id": course["course_id"],
+            "course_name": course["course_name"],
+            "clazz_id": course["clazz_id"],
+            "entry_url": context["entry_url"],
+            "final_url": redact_url_query_values(
+                str(context["final_url"]), {"enc", "stuenc", "openc"}
+            ),
+            "module_count": len(public_modules),
+            "modules": public_modules,
+            "verification": "authenticated student-role course HTML parsed through HTTP",
+        }
+
+    def inspect_learning_course_module(
+        self,
+        course: dict[str, Any],
+        module_query: str,
+    ) -> dict[str, Any]:
+        session = self._session()
+        context = self._learning_course_context(session, course)
+        item = resolve_module(context["modules"], module_query)
+        module_url = self._learning_module_url(context, item)
+        try:
+            response = session.get(
+                module_url,
+                timeout=max(self.timeout, 60),
+                allow_redirects=True,
+                headers={"Referer": str(context["final_url"])},
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ChaoxingAPIError(f"learning-course module request failed: {exc}") from exc
+        if "passport2.chaoxing.com/login" in response.url.lower():
+            raise ChaoxingAPIError("learning-course module was redirected to login")
+        html = self._decode(response)
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
+        return {
+            "course_id": course["course_id"],
+            "course_name": course["course_name"],
+            "clazz_id": course["clazz_id"],
+            "module": item,
+            "request_url": redact_url_query_values(
+                module_url, {"enc", "stuenc", "openc", "workEnc", "examEnc"}
+            ),
+            "final_url": redact_url_query_values(
+                response.url, {"enc", "stuenc", "openc", "workEnc", "examEnc"}
+            ),
+            "http_status": response.status_code,
+            "content_type": str(response.headers.get("Content-Type") or ""),
+            "title": html_text(title_match.group(1)) if title_match else "",
+            "text_excerpt": html_text(html, limit=20_000),
+            "verification": "authenticated student-role module response retrieved through HTTP",
+        }
+
+    @staticmethod
+    def _learning_integrity_state(context: dict[str, Any]) -> dict[str, Any]:
+        values = context.get("values") if isinstance(context.get("values"), dict) else {}
+        account_pending = str(values.get("notAgreeCommitment") or "").strip().lower()
+        course_status = str(values.get("notAgreeCourseCommitment") or "").strip()
+        state_known = account_pending in {"true", "false"} and course_status in {"-1", "0", "1"}
+        required = (account_pending == "true" and course_status == "-1") or course_status == "0"
+        accepted: bool | None
+        if required:
+            accepted = False
+        elif course_status == "1" or (account_pending == "false" and course_status == "-1"):
+            accepted = True
+        else:
+            accepted = None
+        status = {
+            "required": required,
+            "accepted": accepted,
+            "state_known": state_known,
+            "account_commitment_pending": account_pending == "true",
+            "course_commitment_status": course_status,
+        }
+        if course_status == "0":
+            status["basis"] = "course-specific commitment is pending"
+        elif account_pending == "true" and course_status == "-1":
+            status["basis"] = "account commitment is pending and the course inherits it"
+        elif course_status == "1":
+            status["basis"] = "course-specific commitment is accepted"
+        elif account_pending == "false" and course_status == "-1":
+            status["basis"] = "account commitment is accepted and the course inherits it"
+        else:
+            status["basis"] = "page flags do not currently require acceptance"
+        return status
+
+    def read_learning_integrity(self, course: dict[str, Any]) -> dict[str, Any]:
+        context = self._learning_course_context(self._session(), course)
+        return {
+            "course_id": course["course_id"],
+            "course_name": course["course_name"],
+            "clazz_id": course["clazz_id"],
+            "commitment": self._learning_integrity_state(context),
+            "verification": "integrity requirement derived from current course-page flags",
+        }
+
+    def accept_learning_integrity(self, course: dict[str, Any]) -> dict[str, Any]:
+        session = self._session()
+        context = self._learning_course_context(session, course)
+        before = self._learning_integrity_state(context)
+        if before["accepted"] is True:
+            return {
+                "course_id": course["course_id"],
+                "course_name": course["course_name"],
+                "clazz_id": course["clazz_id"],
+                "before": before,
+                "after": before,
+                "changed": False,
+                "verification": "course page already showed no pending integrity acceptance",
+            }
+        if before["required"] is not True:
+            raise ChaoxingAPIError(
+                "the current course page exposes no pending integrity acceptance to submit"
+            )
+        values = context["values"]
+        try:
+            response = session.get(
+                LEARNING_INTEGRITY_UPDATE_URL,
+                params={
+                    "courseid": str(values.get("courseid") or course["course_id"]),
+                    "clazzid": str(values.get("clazzid") or course["clazz_id"]),
+                    "personid": str(values.get("personid") or course.get("cpi") or ""),
+                    "type": "1",
+                },
+                timeout=self.timeout,
+                headers={
+                    "Referer": str(context["final_url"]),
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ChaoxingAPIError(f"learning-integrity acceptance failed: {exc}") from exc
+        try:
+            payload = json.loads(self._decode(response))
+        except json.JSONDecodeError as exc:
+            raise ChaoxingAPIError("learning-integrity response was not JSON") from exc
+        if not isinstance(payload, dict) or payload.get("status") is not True:
+            message = payload.get("msg") if isinstance(payload, dict) else ""
+            raise ChaoxingAPIError(
+                str(message or "learning-integrity acceptance was not acknowledged")
+            )
+        after_context = self._learning_course_context(session, course)
+        after = self._learning_integrity_state(after_context)
+        if not after["accepted"]:
+            raise ChaoxingAPIError(
+                "server acknowledged integrity acceptance, but the refreshed course "
+                "still requires it"
+            )
+        return {
+            "course_id": course["course_id"],
+            "course_name": course["course_name"],
+            "clazz_id": course["clazz_id"],
+            "before": before,
+            "after": after,
+            "changed": True,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": (
+                "server acknowledged acceptance and refreshed course flags no longer require it"
+            ),
+        }
 
     def list_classes(self, course_query: str) -> dict[str, Any]:
         course = self.get_course(course_query)

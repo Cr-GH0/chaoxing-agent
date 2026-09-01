@@ -2702,6 +2702,52 @@ async def chaoxing_list_teaching_courses() -> dict[str, Any]:
 
 
 @mcp.tool()
+async def chaoxing_list_learning_courses(search: str = "") -> dict[str, Any]:
+    """List courses joined by the current account as a learner."""
+    return await runtime.execute("learning.courses.list", {"search": search})
+
+
+@mcp.tool()
+async def chaoxing_list_learning_course_modules(course: str) -> dict[str, Any]:
+    """Discover learner-side entries for one joined course selected by name or ID."""
+    return await runtime.execute(
+        "learning.course.modules.discover",
+        {"course": course},
+    )
+
+
+@mcp.tool()
+async def chaoxing_open_learning_course_module(course: str, module: str) -> dict[str, Any]:
+    """Read one learner-side course entry through authenticated HTTP."""
+    return await runtime.execute(
+        "learning.course.module.open",
+        {"course": course, "module": module},
+    )
+
+
+@mcp.tool()
+async def chaoxing_read_learning_integrity(course: str) -> dict[str, Any]:
+    """Read whether a joined course currently requires integrity acceptance."""
+    return await runtime.execute(
+        "learning.course.integrity.read",
+        {"course": course},
+    )
+
+
+@mcp.tool()
+async def chaoxing_accept_learning_integrity(
+    course: str,
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm accepting a joined course's online-learning commitment."""
+    return await runtime.execute(
+        "learning.course.integrity.accept",
+        {"course": course},
+        confirmation_token=confirmation_token,
+    )
+
+
+@mcp.tool()
 async def chaoxing_list_classes(course: str) -> dict[str, Any]:
     """List classes for one teaching course selected by name, index, or course ID."""
     return await runtime.execute("courses.list_classes", {"course": course})

@@ -5191,6 +5191,79 @@ def route_command(command: str) -> CommandPlan:
                 confidence=0.96,
             )
 
+    learning_context = bool(re.search(r"我学的课|我学的课程|我学课程|学生课程", text))
+    if learning_context:
+        quoted = _extract_quoted(text)
+        integrity_intent = bool(re.search(r"诚信.*承诺|在线学习.*承诺|承诺书", text))
+        if integrity_intent and re.search(r"签署|接受|同意|确认签署", text):
+            parameters = {"course": quoted[0]} if quoted else {}
+            return CommandPlan(
+                text,
+                "learning.course.integrity.accept",
+                parameters=parameters,
+                confidence=0.98 if quoted else 0.72,
+                missing_fields=[] if quoted else ["course"],
+                message="请用书名号提供要签署在线学习诚信承诺书的课程。" if not quoted else "",
+            )
+        if integrity_intent:
+            parameters = {"course": quoted[0]} if quoted else {}
+            return CommandPlan(
+                text,
+                "learning.course.integrity.read",
+                parameters=parameters,
+                confidence=0.98 if quoted else 0.72,
+                missing_fields=[] if quoted else ["course"],
+                message="请用书名号提供要查看诚信承诺状态的课程。" if not quoted else "",
+            )
+        if re.search(r"模块|入口|功能", text):
+            parameters = {"course": quoted[0]} if quoted else {}
+            return CommandPlan(
+                text,
+                "learning.course.modules.discover",
+                parameters=parameters,
+                confidence=0.98 if quoted else 0.72,
+                missing_fields=[] if quoted else ["course"],
+                message="请用书名号提供要查看学生侧功能入口的课程。" if not quoted else "",
+            )
+        module_aliases = (
+            "AI助教",
+            "任务",
+            "章节",
+            "讨论",
+            "作业",
+            "考试",
+            "资料",
+            "错题集",
+            "学习记录",
+            "课程图谱",
+            "自测",
+            "直播课/见面课",
+            "直播课",
+            "见面课",
+        )
+        requested_module = quoted[1] if len(quoted) >= 2 else ""
+        if not requested_module:
+            requested_module = next(
+                (module for module in module_aliases if module in text),
+                "",
+            )
+        if requested_module and re.search(r"打开|进入|查看|读取", text):
+            parameters: dict[str, object] = {"module": requested_module}
+            if quoted:
+                parameters["course"] = quoted[0]
+            missing = [] if "course" in parameters else ["course"]
+            return CommandPlan(
+                text,
+                "learning.course.module.open",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.74,
+                missing_fields=missing,
+                message="请用书名号提供要进入的我学课程。" if missing else "",
+            )
+        search = quoted[0] if quoted and re.search(r"搜索|查找", text) else ""
+        parameters = {"search": search} if search else {}
+        return CommandPlan(text, "learning.courses.list", parameters=parameters, confidence=0.97)
+
     course_list_intent = bool(
         re.search(
             r"(列出|查看|显示|有哪些).*(我教的课|我教的课程|教师课程)"

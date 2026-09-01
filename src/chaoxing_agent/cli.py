@@ -1409,6 +1409,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("courses", help="list teaching courses")
 
+    learning_courses = sub.add_parser(
+        "learning-courses", help="list courses joined by the current account as a learner"
+    )
+    learning_courses.add_argument("--search", default="")
+
+    learning_modules = sub.add_parser(
+        "learning-modules", help="discover current learner-side entries for one course"
+    )
+    learning_modules.add_argument("course")
+
+    learning_open = sub.add_parser(
+        "learning-open", help="read one learner-side course entry through HTTP"
+    )
+    learning_open.add_argument("course")
+    learning_open.add_argument("module")
+
+    learning_integrity = sub.add_parser(
+        "learning-integrity", help="read the online-learning integrity commitment status"
+    )
+    learning_integrity.add_argument("course")
+
+    learning_integrity_accept = sub.add_parser(
+        "learning-integrity-accept",
+        help="preview or confirm accepting a course integrity commitment",
+    )
+    learning_integrity_accept.add_argument("course")
+    learning_integrity_accept.add_argument("--confirmation-token")
+
     classes = sub.add_parser("classes", help="list classes for one course")
     classes.add_argument("course")
 
@@ -5591,6 +5619,32 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
         )
     if args.command == "courses":
         return await runtime.execute("courses.list_teaching")
+    if args.command == "learning-courses":
+        return await runtime.execute(
+            "learning.courses.list",
+            {"search": args.search},
+        )
+    if args.command == "learning-modules":
+        return await runtime.execute(
+            "learning.course.modules.discover",
+            {"course": args.course},
+        )
+    if args.command == "learning-open":
+        return await runtime.execute(
+            "learning.course.module.open",
+            {"course": args.course, "module": args.module},
+        )
+    if args.command == "learning-integrity":
+        return await runtime.execute(
+            "learning.course.integrity.read",
+            {"course": args.course},
+        )
+    if args.command == "learning-integrity-accept":
+        return await runtime.execute(
+            "learning.course.integrity.accept",
+            {"course": args.course},
+            args.confirmation_token,
+        )
     if args.command == "classes":
         return await runtime.execute("courses.list_classes", {"course": args.course})
     if args.command == "class-create":

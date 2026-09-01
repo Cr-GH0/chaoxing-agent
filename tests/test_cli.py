@@ -10,6 +10,27 @@ def test_personal_space_cli_parses_discovery_and_open() -> None:
     assert opening.module == "笔记"
 
 
+def test_learning_cli_parses_list_modules_open_and_integrity() -> None:
+    listing = build_parser().parse_args(["learning-courses", "--search", "英语"])
+    modules = build_parser().parse_args(["learning-modules", "英语文体与写作"])
+    opened = build_parser().parse_args(["learning-open", "英语文体与写作", "章节"])
+    integrity = build_parser().parse_args(["learning-integrity", "英语文体与写作"])
+    accepted = build_parser().parse_args(
+        [
+            "learning-integrity-accept",
+            "英语文体与写作",
+            "--confirmation-token",
+            "token-1",
+        ]
+    )
+
+    assert listing.search == "英语"
+    assert modules.course == "英语文体与写作"
+    assert opened.module == "章节"
+    assert integrity.command == "learning-integrity"
+    assert accepted.confirmation_token == "token-1"
+
+
 def test_job_ability_cli_parses_search_catalog_and_industry_commands() -> None:
     search = build_parser().parse_args(
         ["job-search", "英语教师", "--education", "本科", "--page", "2", "--page-size", "30"]

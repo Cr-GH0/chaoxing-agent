@@ -2212,6 +2212,60 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         aliases=("查看班级", "课程班级"),
     ),
     ActionSpec(
+        "learning.courses.list",
+        "列出我学的课",
+        "learning",
+        ActionRisk.READ,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        live_verified=True,
+        description="通过学生身份课程列表接口读取当前账号加入的课程、班级、教师和状态。",
+        aliases=("我学的课", "学生课程", "已加入课程"),
+    ),
+    ActionSpec(
+        "learning.course.modules.discover",
+        "发现学生课程功能入口",
+        "learning",
+        ActionRisk.READ,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        live_verified=True,
+        description="进入一门我学的课并动态解析当前学生身份实际开放的功能入口。",
+        aliases=("学生课程模块", "我学课程入口"),
+    ),
+    ActionSpec(
+        "learning.course.module.open",
+        "读取学生课程功能",
+        "learning",
+        ActionRisk.READ,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        live_verified=True,
+        description="以学生身份通过 HTTP 读取课程内一个实际开放的功能入口。",
+        aliases=("打开我学课程章节", "查看学生课程作业", "进入学生课程考试"),
+    ),
+    ActionSpec(
+        "learning.course.integrity.read",
+        "读取在线学习诚信承诺状态",
+        "learning",
+        ActionRisk.READ,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        live_verified=True,
+        description="根据当前课程页的账号与课程标志判断是否需要签署在线学习诚信承诺书。",
+        aliases=("诚信承诺状态", "在线学习承诺书"),
+    ),
+    ActionSpec(
+        "learning.course.integrity.accept",
+        "签署在线学习诚信承诺书",
+        "learning",
+        ActionRisk.PUBLISH,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description="代表当前账号接受指定课程的在线学习诚信承诺；执行前必须确认并在提交后回读。",
+        aliases=("同意在线学习承诺书", "接受诚信承诺"),
+    ),
+    ActionSpec(
         "classes.create",
         "新建课程班级",
         "class_management",
@@ -5773,6 +5827,22 @@ SPACE_MODULES: tuple[tuple[str, str], ...] = (
 )
 
 
+LEARNING_MODULES: tuple[tuple[str, str], ...] = (
+    ("ai_tutor", "AI助教"),
+    ("activities", "任务"),
+    ("chapters", "章节"),
+    ("discussions", "讨论"),
+    ("homework", "作业"),
+    ("exams", "考试"),
+    ("materials", "资料"),
+    ("wrong_questions", "错题集"),
+    ("learning_records", "学习记录"),
+    ("knowledge_graph", "课程图谱"),
+    ("self_tests", "自测"),
+    ("live_classes", "直播课/见面课"),
+)
+
+
 COURSE_SURFACE_DOMAINS: dict[str, tuple[str, ...]] = {
     "ai_workbench": ("ai_workbench",),
     "task_engine": ("task_engine",),
@@ -5795,7 +5865,7 @@ COURSE_SURFACE_DOMAINS: dict[str, tuple[str, ...]] = {
 
 
 SPACE_SURFACE_DOMAINS: dict[str, tuple[str, ...]] = {
-    "course_teaching": ("courses", "class_management"),
+    "course_teaching": ("courses", "class_management", "learning"),
     "attainment": (),
     "job_ability": ("job_ability",),
     "syllabus": (),
@@ -5812,32 +5882,57 @@ SPACE_SURFACE_DOMAINS: dict[str, tuple[str, ...]] = {
 }
 
 
-OBSERVED_ACTIONS: tuple[ActionSpec, ...] = tuple(
-    ActionSpec(
-        f"course.surface.{slug}",
-        label,
-        "course_surface",
-        ActionRisk.NAVIGATE,
-        CapabilityState.OBSERVED,
-        "pending",
-        live_verified=True,
-        description=(f"已在教师课程页观察到“{label}”入口；具体语义动作覆盖见 surface_coverage。"),
+LEARNING_SURFACE_DOMAINS: dict[str, tuple[str, ...]] = {
+    slug: () for slug, _label in LEARNING_MODULES
+}
+
+
+OBSERVED_ACTIONS: tuple[ActionSpec, ...] = (
+    tuple(
+        ActionSpec(
+            f"course.surface.{slug}",
+            label,
+            "course_surface",
+            ActionRisk.NAVIGATE,
+            CapabilityState.OBSERVED,
+            "pending",
+            live_verified=True,
+            description=(
+                f"已在教师课程页观察到“{label}”入口；具体语义动作覆盖见 surface_coverage。"
+            ),
+        )
+        for slug, label in COURSE_MODULES
     )
-    for slug, label in COURSE_MODULES
-) + tuple(
-    ActionSpec(
-        f"space.surface.{slug}",
-        label,
-        "space_surface",
-        ActionRisk.NAVIGATE,
-        CapabilityState.OBSERVED,
-        "pending",
-        live_verified=True,
-        description=(
-            f"已在个人空间观察到“{label}”入口；具体语义动作或通用读取边界见 surface_coverage。"
-        ),
+    + tuple(
+        ActionSpec(
+            f"space.surface.{slug}",
+            label,
+            "space_surface",
+            ActionRisk.NAVIGATE,
+            CapabilityState.OBSERVED,
+            "pending",
+            live_verified=True,
+            description=(
+                f"已在个人空间观察到“{label}”入口；具体语义动作或通用读取边界见 surface_coverage。"
+            ),
+        )
+        for slug, label in SPACE_MODULES
     )
-    for slug, label in SPACE_MODULES
+    + tuple(
+        ActionSpec(
+            f"learning.surface.{slug}",
+            label,
+            "learning_surface",
+            ActionRisk.NAVIGATE,
+            CapabilityState.OBSERVED,
+            "pending",
+            live_verified=True,
+            description=(
+                f"已在学生课程页观察到“{label}”入口；当前可通过学生课程通用 HTTP 入口读取。"
+            ),
+        )
+        for slug, label in LEARNING_MODULES
+    )
 )
 
 
@@ -5851,6 +5946,7 @@ def _surface_coverage() -> list[dict[str, Any]]:
     for surface, modules, mapping in (
         ("course", COURSE_MODULES, COURSE_SURFACE_DOMAINS),
         ("space", SPACE_MODULES, SPACE_SURFACE_DOMAINS),
+        ("learning", LEARNING_MODULES, LEARNING_SURFACE_DOMAINS),
     ):
         for slug, label in modules:
             domains = mapping[slug]
@@ -5864,7 +5960,13 @@ def _surface_coverage() -> list[dict[str, Any]]:
                     "implemented_action_count": implemented_count,
                     "coverage": "semantic_actions" if domains else "generic_entry_only",
                     "fallback_action": (
-                        "course.module.open" if surface == "course" else "space.module.open"
+                        "course.module.open"
+                        if surface == "course"
+                        else (
+                            "space.module.open"
+                            if surface == "space"
+                            else "learning.course.module.open"
+                        )
                     ),
                 }
             )
@@ -5879,7 +5981,9 @@ def capability_report() -> dict[str, Any]:
     )
     return {
         "status": "ok",
-        "scope": "current teacher and personal-space web surfaces observed through 2026-09-01",
+        "scope": (
+            "current teacher, learner, and personal-space web surfaces observed through 2026-09-01"
+        ),
         "summary": {
             "total": len(ACTION_CATALOG),
             "by_state": dict(state_counts),

@@ -471,6 +471,25 @@ def test_route_course_list() -> None:
     assert plan.action == "courses.list_teaching"
 
 
+def test_route_learning_course_list_modules_open_and_integrity() -> None:
+    listing = route_command("列出我学的课")
+    searched = route_command("搜索我学的课程《心理学》")
+    modules = route_command("查看我学课程《英语文体与写作》的功能入口")
+    opened = route_command("打开我学课程《英语文体与写作》的《章节》")
+    integrity = route_command("查看我学课程《英语文体与写作》的在线学习诚信承诺书状态")
+    accept = route_command("同意我学课程《英语文体与写作》的在线学习诚信承诺书")
+
+    assert listing.action == "learning.courses.list"
+    assert searched.action == "learning.courses.list"
+    assert searched.parameters == {"search": "心理学"}
+    assert modules.action == "learning.course.modules.discover"
+    assert modules.parameters == {"course": "英语文体与写作"}
+    assert opened.action == "learning.course.module.open"
+    assert opened.parameters == {"course": "英语文体与写作", "module": "章节"}
+    assert integrity.action == "learning.course.integrity.read"
+    assert accept.action == "learning.course.integrity.accept"
+
+
 def test_route_course_classes_with_quoted_course() -> None:
     plan = route_command("查看《语言测试示例》的班级")
     assert plan.action == "courses.list_classes"

@@ -301,6 +301,11 @@ def test_core_actions_are_implemented() -> None:
         "groups.topic.draft.publish",
         "courses.list_teaching",
         "courses.list_classes",
+        "learning.courses.list",
+        "learning.course.modules.discover",
+        "learning.course.module.open",
+        "learning.course.integrity.read",
+        "learning.course.integrity.accept",
         "course.modules.discover",
         "course.module.open",
         "knowledge_hub.status.read",
@@ -358,14 +363,14 @@ def test_core_actions_are_implemented() -> None:
 def test_report_keeps_observed_separate_from_implemented() -> None:
     report = capability_report()
     counts = report["summary"]["by_state"]
-    assert counts["observed"] == 31
-    assert counts["implemented"] == 530
+    assert counts["observed"] == 43
+    assert counts["implemented"] == 535
 
 
 def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None:
     report = capability_report()
     coverage = {(item["surface"], item["slug"]): item for item in report["surface_coverage"]}
-    assert len(coverage) == 31
+    assert len(coverage) == 43
     assert coverage[("course", "knowledge_graph")]["semantic_domains"] == ["knowledge_graph"]
     assert coverage[("course", "management")]["semantic_domains"] == [
         "class_management",
@@ -374,6 +379,13 @@ def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None
     assert coverage[("space", "job_ability")]["implemented_action_count"] == 9
     assert coverage[("space", "attainment")]["coverage"] == "generic_entry_only"
     assert coverage[("space", "attainment")]["fallback_action"] == "space.module.open"
+    assert coverage[("space", "course_teaching")]["semantic_domains"] == [
+        "courses",
+        "class_management",
+        "learning",
+    ]
+    assert coverage[("learning", "chapters")]["coverage"] == "generic_entry_only"
+    assert coverage[("learning", "chapters")]["fallback_action"] == "learning.course.module.open"
     assert all(
         item["coverage"] == "semantic_actions"
         for item in coverage.values()
@@ -394,6 +406,10 @@ def test_live_verification_distinguishes_supported_cloud_actions_from_limited_co
         "job_ability.industry_types.list",
         "job_ability.industries.list",
         "job_ability.industry_jobs.list",
+        "learning.courses.list",
+        "learning.course.modules.discover",
+        "learning.course.module.open",
+        "learning.course.integrity.read",
         "notes.list",
         "notes.read",
         "notes.create",
@@ -544,3 +560,4 @@ def test_live_verification_distinguishes_supported_cloud_actions_from_limited_co
     ):
         assert ACTION_BY_NAME[name].live_verified is True
     assert ACTION_BY_NAME["resources.copy"].live_verified is False
+    assert ACTION_BY_NAME["learning.course.integrity.accept"].live_verified is False

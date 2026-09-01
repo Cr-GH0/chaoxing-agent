@@ -43,6 +43,7 @@ from chaoxing_agent.api import (
     parse_homework_items,
     parse_homework_library_items,
     parse_homework_question_detail,
+    parse_learning_courses,
     parse_learning_progress_payload,
     parse_note_detail_html,
     parse_note_detail_user,
@@ -98,6 +99,7 @@ from chaoxing_agent.api import (
     resolve_homework_editor_target,
     resolve_homework_library_item,
     resolve_homework_question,
+    resolve_learning_course,
     resolve_module,
     resolve_notice,
     resolve_notice_draft,
@@ -365,6 +367,209 @@ def test_resolve_course_by_name_id_and_index() -> None:
     assert resolve_course(courses, "语言测试示例")["course_id"] == "900000001"
     assert resolve_course(courses, "900000001")["course_name"] == "语言测试示例"
     assert resolve_course(courses, "1")["course_id"] == "900000001"
+
+
+def sample_learning_course_list_html() -> str:
+    return """
+    <div class="course clearfix learnCourse stu_125867890"
+         info="125867890_485781386" roleId="stu_125867890" id="c_254641935">
+      <input class="clazzId" value="125867890">
+      <input class="courseId" value="254641935">
+      <input class="role" value="0">
+      <input class="curPersonId" value="485781386">
+      <a href="https://mooc1.chaoxing.com/visit/stucoursemiddle?courseid=254641935&amp;clazzid=125867890&amp;cpi=485781386&amp;ismooc2=1&amp;v=2">
+        <img data-original="https://p.ananas.chaoxing.com/star.png">
+        <span class="course-name overHidden2" title="英语文体与写作">英语文体与写作</span>
+      </a>
+      <p class="color3" title="张老师">张老师</p>
+      <p>开课时间：2025-2026-2</p>
+      <a onclick="quitTheCourse('125867890')">退课</a>
+    </div>
+    <div class="course clearfix learnCourse endCourse stu_145388184"
+         info="145388184_549097219" roleId="stu_145388184" id="c_262819125">
+      <input class="clazzId" value="145388184">
+      <input class="courseId" value="262819125">
+      <input class="role" value="0">
+      <input class="curPersonId" value="549097219">
+      <a href="https://mooc1.chaoxing.com/visit/stucoursemiddle?courseid=262819125&amp;clazzid=145388184&amp;cpi=549097219&amp;ismooc2=1&amp;v=2">
+        <span class="course-name" title="实验室安全培训">实验室安全培训</span>
+      </a>
+      <p class="color3" title="学校培训中心">学校培训中心</p>
+      <p>开课时间：2026</p>
+      <span>已结束课程</span>
+    </div>
+    """
+
+
+def sample_learning_course_page_html(*, course_status: str = "-1") -> str:
+    return f"""
+    <html><head><title>英语文体与写作</title></head><body>
+      <input type="hidden" id="courseid" value="254641935">
+      <input type="hidden" id="clazzid" value="125867890">
+      <input type="hidden" id="cpi" value="485781386">
+      <input type="hidden" id="personid" value="485781386">
+      <input type="hidden" id="enc" value="student-enc">
+      <input type="hidden" id="workEnc" value="work-enc">
+      <input type="hidden" id="examEnc" value="exam-enc">
+      <input type="hidden" id="oldenc" value="old-enc">
+      <input type="hidden" id="openc" value="open-enc">
+      <input type="hidden" id="t" value="token-t">
+      <ul>
+        <li dataname="zj" pageHeader="1">
+          <a data-url="/mooc2-ans/mycourse/studentstudy?chapterId=0" title="章节">章节</a>
+        </li>
+        <li dataname="zy">
+          <a data-url="https://mooc1.chaoxing.com/mooc2/work/list?foo=bar" title="作业">作业</a>
+        </li>
+      </ul>
+      <script>
+        var notAgreeCommitment = false;
+        var notAgreeCourseCommitment = {course_status};
+      </script>
+    </body></html>
+    """
+
+
+def test_parse_and_resolve_learning_courses() -> None:
+    courses = parse_learning_courses(sample_learning_course_list_html())
+
+    assert len(courses) == 2
+    assert courses[0]["course_name"] == "英语文体与写作"
+    assert courses[0]["clazz_id"] == "125867890"
+    assert courses[0]["teacher"] == "张老师"
+    assert courses[0]["term"] == "2025-2026-2"
+    assert courses[0]["can_quit"] is True
+    assert courses[1]["ended"] is True
+    assert resolve_learning_course(courses, "英语文体与写作")["course_id"] == "254641935"
+    assert resolve_learning_course(courses, "145388184")["course_name"] == "实验室安全培训"
+
+
+def test_learning_course_list_modules_open_and_integrity_are_http_only(monkeypatch) -> None:
+    class Response:
+        def __init__(self, url: str, body: str, *, payload: dict | None = None) -> None:
+            self.url = url
+            self.content = body.encode("utf-8")
+            self.encoding = "utf-8"
+            self.apparent_encoding = "utf-8"
+            self.status_code = 200
+            self.headers = {"Content-Type": "text/html; charset=utf-8"}
+            self._payload = payload
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, dict]] = []
+
+        def post(self, url: str, **kwargs) -> Response:
+            self.calls.append(("POST", url, kwargs))
+            return Response(url, sample_learning_course_list_html())
+
+        def get(self, url: str, **kwargs) -> Response:
+            self.calls.append(("GET", url, kwargs))
+            if "studentstudy" in url:
+                return Response(url, "<html><title>章节学习</title><main>第一章</main></html>")
+            return Response(
+                "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=254641935",
+                sample_learning_course_page_html(),
+            )
+
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    session = Session()
+    landing = Response(
+        "https://mooc2-ans.chaoxing.com/visit/interaction",
+        '<input type="hidden" id="fid" value="23080">',
+    )
+    monkeypatch.setattr(
+        api,
+        "_personal_space_module_context",
+        lambda _query: (session, landing, {"label": "课程教学"}),
+    )
+    courses = api.list_learning_courses()
+    assert len(courses) == 2
+    assert session.calls[0][2]["data"]["courseType"] == "1"
+
+    course = courses[0]
+    monkeypatch.setattr(api, "_session", lambda: session)
+    modules = api.discover_learning_course_modules(course)
+    assert [item["label"] for item in modules["modules"]] == ["章节", "作业"]
+    opened = api.inspect_learning_course_module(course, "章节")
+    assert opened["title"] == "章节学习"
+    assert "pageHeader=1" in opened["request_url"]
+    integrity = api.read_learning_integrity(course)
+    assert integrity["commitment"]["required"] is False
+    assert integrity["commitment"]["basis"].startswith("account commitment is accepted")
+
+
+def test_learning_integrity_accept_requires_acknowledgement_and_refresh(monkeypatch) -> None:
+    class Response:
+        def __init__(self, url: str, body: str, content_type: str = "text/html") -> None:
+            self.url = url
+            self.content = body.encode("utf-8")
+            self.encoding = "utf-8"
+            self.apparent_encoding = "utf-8"
+            self.status_code = 200
+            self.headers = {"Content-Type": content_type}
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.page_reads = 0
+            self.calls: list[tuple[str, dict]] = []
+
+        def get(self, url: str, **kwargs) -> Response:
+            self.calls.append((url, kwargs))
+            if url.endswith("/update-person-status"):
+                return Response(url, '{"status":true,"msg":"ok"}', "application/json")
+            self.page_reads += 1
+            status = "0" if self.page_reads == 1 else "1"
+            return Response(
+                "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=254641935",
+                sample_learning_course_page_html(course_status=status).replace(
+                    "var notAgreeCommitment = false;",
+                    "var notAgreeCommitment = true;",
+                ),
+            )
+
+    course = {
+        "course_id": "254641935",
+        "course_name": "英语文体与写作",
+        "clazz_id": "125867890",
+        "cpi": "485781386",
+        "entry_url": (
+            "https://mooc1.chaoxing.com/visit/stucoursemiddle?"
+            "courseid=254641935&clazzid=125867890&cpi=485781386"
+        ),
+    }
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    session = Session()
+    monkeypatch.setattr(api, "_session", lambda: session)
+
+    result = api.accept_learning_integrity(course)
+
+    assert result["changed"] is True
+    assert result["before"]["required"] is True
+    assert result["after"]["accepted"] is True
+    update = next(call for call in session.calls if call[0].endswith("update-person-status"))
+    assert update[1]["params"] == {
+        "courseid": "254641935",
+        "clazzid": "125867890",
+        "personid": "485781386",
+        "type": "1",
+    }
+
+
+def test_learning_integrity_missing_flags_are_unknown_not_accepted() -> None:
+    state = ChaoxingAPI._learning_integrity_state({"values": {}})
+
+    assert state["required"] is False
+    assert state["accepted"] is None
+    assert state["state_known"] is False
 
 
 def test_resolve_class_defaults_to_first() -> None:
