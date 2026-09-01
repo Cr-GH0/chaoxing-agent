@@ -519,6 +519,12 @@ def test_route_learning_course_semantic_reads() -> None:
     discussions = route_command("搜索我学课程《英语文体与写作》本班讨论《环境》")
     homeworks = route_command("查看我学课程《英语文体与写作》的未交作业列表")
     homework = route_command("查看我学课程《新教师入职培训》的作业《BOPPPS设计小讨论》详情")
+    homework_attempts = route_command(
+        "查看我学课程《新教师入职培训》的作业《BOPPPPS设计小讨论》作答记录"
+    )
+    homework_attempt = route_command(
+        "查看我学课程《新教师入职培训》的作业《BOPPPPS设计小讨论》第2次作答记录"
+    )
     exams = route_command("列出我学课程《英语文体与写作》的考试")
     self_tests = route_command("查看我学课程《英语文体与写作》的自测")
     materials = route_command("查看我学课程《英语文体与写作》的资料文件夹《Week 1》")
@@ -543,6 +549,13 @@ def test_route_learning_course_semantic_reads() -> None:
         "course": "新教师入职培训",
         "homework": "BOPPPS设计小讨论",
     }
+    assert homework_attempts.action == "learning.course.homework.attempts.list"
+    assert homework_attempts.parameters == {
+        "course": "新教师入职培训",
+        "homework": "BOPPPPS设计小讨论",
+    }
+    assert homework_attempt.action == "learning.course.homework.attempt.read"
+    assert homework_attempt.parameters["attempt"] == "2"
     assert exams.action == "learning.course.exams.list"
     assert self_tests.action == "learning.course.self_tests.list"
     assert materials.action == "learning.course.materials.list"

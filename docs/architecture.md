@@ -57,6 +57,8 @@ Windows CLI 的 `--windows-dialog` 使用系统 `CredUIPromptForWindowsCredentia
 
 `learning.course.homework.read` 先从当前学生作业列表解析指定作业及仅在内存中使用的签名入口，再读取预览或详情页。结果保留题目、图片、附件和当前答案，但剔除 `enc` 等会话参数；读取后重新解析作业列表，只有状态与 `answer_id` 均未变化才报告成功。该动作不调用保存、重做或提交接口。
 
+作业详情页公开的 `/mooc-ans/mooc2/work/answer-list` 用于读取历次作答索引；历史记录通过页面提供的 `selectTimes` 参数读取。两类动作都只在内存中使用 `enc`，公开结果不返回历史页签名地址，并在完成后复核作业状态与 `answer_id`。当前账号已实测空记录列表；指定历史作答读取有页面协议与自动测试，但因当前账号没有非空记录，未标记真实条目验证。
+
 后续动作从 `CHAOXING_COOKIE_FILE` 创建独立 `requests.Session`。Cookie 文件应位于仓库外；`.gitignore` 还排除了常见 Cookie 文件名和本地运行目录。
 
 如果平台要求二次验证，登录动作返回明确错误与平台验证地址。项目不尝试绕过二次验证。

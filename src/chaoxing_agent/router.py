@@ -5324,7 +5324,43 @@ def route_command(command: str) -> CommandPlan:
                 missing_fields=[] if quoted else ["course"],
                 message="请用书名号提供要查看 AI 工具的课程。" if not quoted else "",
             )
-        if "作业" in text and re.search(r"详情|题目|题干|我的答案|当前答案|答题记录", text):
+        if "作业" in text and re.search(
+            r"作答记录|答题记录|作答历史|答题历史|历史答案|历次作答",
+            text,
+        ):
+            parameters: dict[str, object] = {}
+            if quoted:
+                parameters["course"] = quoted[0]
+            operands = quoted[1:]
+            if operands and operands[0] == "作业":
+                operands = operands[1:]
+            homework = operands[0] if operands else ""
+            if homework:
+                parameters["homework"] = homework
+            attempt = operands[1] if len(operands) > 1 else ""
+            attempt_match = re.search(r"第\s*(\d+)\s*次(?:作答|答题)", text)
+            if attempt_match:
+                attempt = attempt_match.group(1)
+            if attempt:
+                parameters["attempt"] = attempt
+            required = ("course", "homework", "attempt") if attempt else ("course", "homework")
+            missing = [key for key in required if key not in parameters]
+            action = (
+                "learning.course.homework.attempt.read"
+                if attempt
+                else "learning.course.homework.attempts.list"
+            )
+            return CommandPlan(
+                text,
+                action,
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message=(
+                    "请依次用书名号提供课程和作业；读取某次记录时再提供次数。" if missing else ""
+                ),
+            )
+        if "作业" in text and re.search(r"详情|题目|题干|我的答案|当前答案", text):
             parameters: dict[str, object] = {}
             if quoted:
                 parameters["course"] = quoted[0]

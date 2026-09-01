@@ -2799,6 +2799,31 @@ async def chaoxing_read_learning_homework(
 
 
 @mcp.tool()
+async def chaoxing_list_learning_homework_attempts(
+    course: str,
+    homework: str,
+) -> dict[str, Any]:
+    """List learner homework answer records without opening an attempt."""
+    return await runtime.execute(
+        "learning.course.homework.attempts.list",
+        {"course": course, "homework": homework},
+    )
+
+
+@mcp.tool()
+async def chaoxing_read_learning_homework_attempt(
+    course: str,
+    homework: str,
+    attempt: str,
+) -> dict[str, Any]:
+    """Read one historical learner homework attempt without saving or submitting."""
+    return await runtime.execute(
+        "learning.course.homework.attempt.read",
+        {"course": course, "homework": homework, "attempt": attempt},
+    )
+
+
+@mcp.tool()
 async def chaoxing_list_learning_exams(
     course: str,
     search: str = "",

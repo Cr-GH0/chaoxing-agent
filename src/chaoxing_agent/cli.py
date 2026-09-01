@@ -1486,6 +1486,21 @@ def build_parser() -> argparse.ArgumentParser:
     learning_homework_read.add_argument("course")
     learning_homework_read.add_argument("homework")
 
+    learning_homework_attempts = sub.add_parser(
+        "learning-homework-attempts",
+        help="list learner homework answer records without opening an attempt",
+    )
+    learning_homework_attempts.add_argument("course")
+    learning_homework_attempts.add_argument("homework")
+
+    learning_homework_attempt_read = sub.add_parser(
+        "learning-homework-attempt-read",
+        help="read one historical learner homework attempt without saving or submitting",
+    )
+    learning_homework_attempt_read.add_argument("course")
+    learning_homework_attempt_read.add_argument("homework")
+    learning_homework_attempt_read.add_argument("attempt")
+
     learning_materials = sub.add_parser(
         "learning-materials", help="list learner-visible course materials or one folder"
     )
@@ -5789,6 +5804,20 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
         return await runtime.execute(
             "learning.course.homework.read",
             {"course": args.course, "homework": args.homework},
+        )
+    if args.command == "learning-homework-attempts":
+        return await runtime.execute(
+            "learning.course.homework.attempts.list",
+            {"course": args.course, "homework": args.homework},
+        )
+    if args.command == "learning-homework-attempt-read":
+        return await runtime.execute(
+            "learning.course.homework.attempt.read",
+            {
+                "course": args.course,
+                "homework": args.homework,
+                "attempt": args.attempt,
+            },
         )
     if args.command == "learning-materials":
         return await runtime.execute(

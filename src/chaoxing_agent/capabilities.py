@@ -2305,6 +2305,33 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         aliases=("查看学生作业详情", "读取我的作业题目", "查看我的作业答案"),
     ),
     ActionSpec(
+        "learning.course.homework.attempts.list",
+        "列出学生作业历次作答",
+        "learning_homework",
+        ActionRisk.READ,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        live_verified=True,
+        description=(
+            "读取指定学生作业的答题实例可用性与作答记录索引；读取后复核作业状态与"
+            "答题 ID 未变化，不进入历史答案或发送保存、重做、提交请求。"
+        ),
+        aliases=("查看学生作业作答记录", "列出我的作业历史", "历次作答"),
+    ),
+    ActionSpec(
+        "learning.course.homework.attempt.read",
+        "读取学生作业历史作答",
+        "learning_homework",
+        ActionRisk.READ,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description=(
+            "按作答次数读取一份学生作业历史答案，并复核作业状态与答题 ID 未变化；"
+            "当前账号没有非空作答记录，尚未完成真实条目验证。"
+        ),
+        aliases=("查看学生作业历史答案", "读取我的历次作答", "查看第几次作答"),
+    ),
+    ActionSpec(
         "learning.course.exams.list",
         "列出学生课程考试",
         "learning_exams",

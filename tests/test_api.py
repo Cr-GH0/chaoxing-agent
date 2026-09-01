@@ -48,6 +48,7 @@ from chaoxing_agent.api import (
     parse_learning_ai_tools,
     parse_learning_chapters,
     parse_learning_courses,
+    parse_learning_homework_attempts,
     parse_learning_homework_detail,
     parse_learning_materials,
     parse_learning_progress_payload,
@@ -811,6 +812,39 @@ def test_parse_learner_semantic_pages_without_exposing_session_tokens() -> None:
     assert "secret" not in str(homework_detail)
     assert "image-token" not in str(homework_detail)
 
+    attempts = parse_learning_homework_attempts(
+        """
+        <div class="recordTab">
+          <a onclick="showAnswer(1)">第 1 次作答 80 分</a>
+          <a onclick="showAnswer('2')">第 2 次作答 90 分</a>
+        </div>
+        <script>function showAnswer(times) { window.open('/view?enc=secret'); }</script>
+        """
+    )
+    assert attempts["attempt_count"] == 2
+    assert attempts["history_available"] is True
+    assert attempts["attempts"][1] == {
+        "index": 2,
+        "attempt_id": "2",
+        "times": "2",
+        "label": "第 2 次作答 90 分",
+    }
+    assert "secret" not in str(attempts)
+    empty_attempts = parse_learning_homework_attempts(
+        '<div class="recordTab">没有作答记录...</div>'
+    )
+    assert empty_attempts["attempt_count"] == 0
+    assert empty_attempts["history_available"] is True
+    assert empty_attempts["empty_message"] == "没有作答记录..."
+    invalid_attempts = parse_learning_homework_attempts(
+        '<div class="recordTab">提示 无效的作答</div>'
+    )
+    assert invalid_attempts["history_available"] is False
+    unknown_attempts = parse_learning_homework_attempts(
+        '<div class="recordTab">系统繁忙，请稍后重试</div>'
+    )
+    assert unknown_attempts["history_available"] is None
+
 
 def test_learning_homework_detail_read_keeps_list_state_unchanged(monkeypatch) -> None:
     list_html = """
@@ -907,6 +941,119 @@ def test_learning_homework_detail_read_keeps_list_state_unchanged(monkeypatch) -
     )
     with pytest.raises(ChaoxingAPIError, match="state changed while reading"):
         api.read_learning_homework(course, "BOPPPS 设计")
+
+
+def test_learning_homework_attempt_history_uses_observed_select_times_route(
+    monkeypatch,
+) -> None:
+    list_html = """
+    <ul><li onclick="goTask(this);"
+      data="https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?workId=88&amp;answerId=99&amp;enc=secret"
+      aria-label="BOPPPS 设计 ; 未交">
+      <p class="overHidden2 fl">BOPPPS 设计</p><p class="status fl">未交</p>
+    </li></ul>
+    """
+    detail_html = """
+    <input type="hidden" id="courseId" value="10">
+    <input type="hidden" id="classId" value="20">
+    <input type="hidden" id="workId" value="88">
+    <input type="hidden" id="answerId" value="99">
+    <h2 class="mark_title">BOPPPS 设计</h2>
+    """
+    history_html = """
+    <div class="recordTab">
+      <a onclick="showAnswer(1)">第 1 次作答 80 分</a>
+      <a onclick="showAnswer('2')">第 2 次作答 90 分</a>
+    </div>
+    <script>
+      function showAnswer(times) {
+        window.open('/mooc2/work/view?answerId=99&enc=secret&selectTimes=' + times);
+      }
+    </script>
+    """
+    attempt_html = """
+    <input type="hidden" id="courseId" value="10">
+    <input type="hidden" id="classId" value="20">
+    <input type="hidden" id="workId" value="88">
+    <input type="hidden" id="answerId" value="99">
+    <h2 class="mark_title">BOPPPS 设计</h2>
+    <div class="mark_item"><h2 class="type_tit">一. 简答题（共1题，100分）</h2>
+      <div class="questionLi" id="question1" data="1">
+        <h3 class="mark_name">1. <span class="colorShallow">(简答题)</span>
+          <span class="qtContent">说明课堂导入。</span>
+        </h3>
+        <dd class="stuAnswerContent">第二次历史答案</dd>
+      </div>
+    </div>
+    """
+
+    class Response:
+        headers = {"Content-Type": "text/html;charset=UTF-8"}
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+        status_code = 200
+
+        def __init__(self, url: str, html: str) -> None:
+            self.url = url
+            self.content = html.encode("utf-8")
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def get(self, url: str, **kwargs) -> Response:
+            self.calls.append((url, kwargs))
+            if url.endswith("/mooc-ans/mooc2/work/answer-list"):
+                return Response(url, history_html)
+            if url.endswith("/mooc-ans/mooc2/work/view"):
+                assert kwargs["params"]["selectTimes"] == "2"
+                return Response(url + "?selectTimes=2&enc=secret", attempt_html)
+            return Response(
+                "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/view?enc=secret",
+                detail_html,
+            )
+
+    session = Session()
+    page = type(
+        "Page",
+        (),
+        {"url": "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=10"},
+    )()
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(
+        api,
+        "_learning_module_response",
+        lambda _course, _module: {
+            "session": session,
+            "response": page,
+            "html": list_html,
+        },
+    )
+    course = {
+        "course_id": "10",
+        "course_name": "Writing",
+        "clazz_id": "20",
+        "cpi": "30",
+    }
+
+    history = api.list_learning_homework_attempts(course, "BOPPPS 设计")
+    attempt = api.read_learning_homework_attempt(course, "BOPPPS 设计", "2")
+
+    assert history["attempt_count"] == 2
+    assert history["history_available"] is True
+    assert history["attempts"][0]["attempt_id"] == "1"
+    assert history["state_unchanged"] is True
+    assert history["page"]["path"] == "/mooc-ans/mooc2/work/answer-list"
+    assert attempt["attempt"]["attempt_id"] == "2"
+    assert attempt["questions"][0]["student_answer"] == "第二次历史答案"
+    assert attempt["state_unchanged"] is True
+    assert attempt["page"]["path"] == "/mooc-ans/mooc2/work/view"
+    assert "secret" not in str(history)
+    assert "secret" not in str(attempt)
 
 
 def test_parse_learning_materials_wrong_questions_activities_and_records() -> None:

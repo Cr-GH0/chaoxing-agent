@@ -195,6 +195,22 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
             }
 
         @staticmethod
+        def list_learning_homework_attempts(course, homework):
+            return {
+                "course": course,
+                "homework": {"title": homework},
+                "attempts": [{"attempt_id": "1"}],
+            }
+
+        @staticmethod
+        def read_learning_homework_attempt(course, homework, attempt):
+            return {
+                "course": course,
+                "homework": {"title": homework},
+                "attempt": {"attempt_id": attempt},
+            }
+
+        @staticmethod
         def list_learning_exams(course, **kwargs):
             return {"course": course, "exams": [], **kwargs}
 
@@ -272,6 +288,14 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
         "learning.course.homework.read",
         {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
     )
+    homework_attempts = await runtime.execute(
+        "learning.course.homework.attempts.list",
+        {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
+    )
+    homework_attempt = await runtime.execute(
+        "learning.course.homework.attempt.read",
+        {"course": "英语文体与写作", "homework": "BOPPPS 设计", "attempt": "1"},
+    )
     exams = await runtime.execute("learning.course.exams.list", {"course": "英语文体与写作"})
     self_tests = await runtime.execute(
         "learning.course.self_tests.list", {"course": "英语文体与写作"}
@@ -321,6 +345,8 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
     assert discussions["result"]["class_only"] is True
     assert homeworks["result"]["homeworks"] == []
     assert homework["result"]["homework"]["title"] == "BOPPPS 设计"
+    assert homework_attempts["result"]["attempts"][0]["attempt_id"] == "1"
+    assert homework_attempt["result"]["attempt"]["attempt_id"] == "1"
     assert exams["result"]["exams"] == []
     assert self_tests["result"]["self_tests"] == []
     assert materials["result"]["folder"] == "Week 1"

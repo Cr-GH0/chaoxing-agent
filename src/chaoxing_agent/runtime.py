@@ -1334,6 +1334,21 @@ class ActionRuntime:
                 course,
                 self._required(parameters, "homework"),
             )
+        if action == "learning.course.homework.attempts.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.list_learning_homework_attempts(
+                course,
+                self._required(parameters, "homework"),
+            )
+        if action == "learning.course.homework.attempt.read":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.read_learning_homework_attempt(
+                course,
+                self._required(parameters, "homework"),
+                self._required(parameters, "attempt"),
+            )
         if action == "learning.course.exams.list":
             api = self._api()
             course = api.get_learning_course(self._required(parameters, "course"))

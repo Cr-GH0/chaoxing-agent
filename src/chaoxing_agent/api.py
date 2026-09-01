@@ -7192,6 +7192,92 @@ def parse_learning_homework_detail(html: str) -> dict[str, Any]:
     }
 
 
+def parse_learning_homework_attempts(html: str) -> dict[str, Any]:
+    """Parse the learner answer-history fragment without returning its signed view URL."""
+
+    source = str(html or "")
+    attempts: list[dict[str, str | int]] = []
+    seen: set[str] = set()
+    for opening in re.finditer(r"<[A-Za-z0-9]+\b[^>]*>", source, flags=re.I | re.S):
+        attrs = html_attrs(opening.group(0))
+        onclick = str(attrs.get("onclick") or "")
+        call = re.search(
+            r"\bshowAnswer\s*\(\s*(['\"]?)([^)'\"\s]+)\1\s*\)",
+            onclick,
+            flags=re.I,
+        )
+        if not call:
+            continue
+        times = unescape(call.group(2)).strip()
+        if not times or times in seen:
+            continue
+        seen.add(times)
+        element = _html_element_fragment(source, opening)
+        label = html_text(element) or str(attrs.get("title") or "").strip()
+        attempts.append(
+            {
+                "index": len(attempts) + 1,
+                "attempt_id": times,
+                "times": times,
+                "label": label,
+            }
+        )
+
+    visible_source = re.sub(
+        r"<(?:script|style)\b[^>]*>[\s\S]*?</(?:script|style)>",
+        "",
+        source,
+        flags=re.I,
+    )
+    visible_text = html_text(visible_source)
+    empty_message = visible_text if not attempts and visible_text else ""
+    invalid_attempt = bool(re.search(r"无效.{0,8}作答|作答.{0,8}无效", visible_text))
+    history_available: bool | None
+    if invalid_attempt:
+        history_available = False
+    elif attempts or "没有作答记录" in visible_text:
+        history_available = True
+    else:
+        history_available = None
+    return {
+        "history_available": history_available,
+        "attempt_count": len(attempts),
+        "attempts": attempts,
+        "empty_message": empty_message,
+    }
+
+
+def resolve_learning_homework_attempt(
+    attempts: list[dict[str, Any]],
+    query: str,
+) -> dict[str, Any]:
+    normalized = str(query or "").strip().casefold()
+    if not normalized:
+        raise ChaoxingAPIError("homework attempt index, ID, or label is required")
+    for key in ("attempt_id", "times", "index"):
+        exact = [
+            item for item in attempts if str(item.get(key) or "").strip().casefold() == normalized
+        ]
+        if len(exact) == 1:
+            return exact[0]
+    exact_labels = [
+        item for item in attempts if str(item.get("label") or "").strip().casefold() == normalized
+    ]
+    if len(exact_labels) == 1:
+        return exact_labels[0]
+    partial = [
+        item for item in attempts if normalized in str(item.get("label") or "").strip().casefold()
+    ]
+    if len(partial) == 1:
+        return partial[0]
+    if not partial:
+        raise ChaoxingAPIError(f"homework attempt not found: {query}")
+    candidates = ", ".join(
+        f"{item.get('index')}. {item.get('label')} ({item.get('attempt_id')})" for item in partial
+    )
+    raise ChaoxingAPIError(f"multiple homework attempts match: {candidates}")
+
+
 def parse_learning_materials(html: str) -> list[dict[str, Any]]:
     """Parse one learner course-material folder page."""
 
@@ -20555,7 +20641,17 @@ class ChaoxingAPI:
             status=status,
         )
 
-    def read_learning_homework(
+    @staticmethod
+    def _public_learning_homework(homework: dict[str, Any]) -> dict[str, Any]:
+        return {
+            **homework,
+            "entry_url": redact_url_query_values(
+                str(homework.get("entry_url") or ""),
+                LEARNING_SECRET_QUERY_NAMES,
+            ),
+        }
+
+    def _learning_homework_detail_context(
         self,
         course: dict[str, Any],
         homework_query: str,
@@ -20594,27 +20690,239 @@ class ChaoxingAPI:
         detail["course_id"] = detail["course_id"] or course["course_id"]
         detail["clazz_id"] = detail["clazz_id"] or course["clazz_id"]
         detail["title"] = detail["title"] or homework["title"]
+        return {
+            "module": module,
+            "session": module["session"],
+            "response": response,
+            "html": html,
+            "homework": homework,
+            "detail": detail,
+        }
 
+    def _verify_learning_homework_state_unchanged(
+        self,
+        course: dict[str, Any],
+        homework: dict[str, Any],
+        operation: str,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         refreshed = self.list_learning_homeworks(course)
-        after = resolve_homework(refreshed["homeworks"], homework["work_id"])
+        after = resolve_homework(
+            refreshed["homeworks"],
+            str(homework.get("work_id") or homework.get("title") or ""),
+        )
         state_fields = ("status", "status_key", "answer_id")
         if any(str(after.get(key) or "") != str(homework.get(key) or "") for key in state_fields):
             raise ChaoxingAPIError(
-                "learner homework state changed while reading its detail; "
+                f"learner homework state changed while {operation}; "
                 "the action stopped before any save or submit request"
             )
-
-        final = urlparse(response.url)
-        public_homework = {
-            **homework,
-            "entry_url": redact_url_query_values(
-                str(homework["entry_url"]),
-                LEARNING_SECRET_QUERY_NAMES,
-            ),
+        postcondition = {
+            "status_before": str(homework.get("status") or ""),
+            "status_after": str(after.get("status") or ""),
+            "status_key_before": str(homework.get("status_key") or ""),
+            "status_key_after": str(after.get("status_key") or ""),
+            "answer_id_before": str(homework.get("answer_id") or ""),
+            "answer_id_after": str(after.get("answer_id") or ""),
         }
+        return after, postcondition
+
+    def _learning_homework_attempts_context(
+        self,
+        course: dict[str, Any],
+        detail_context: dict[str, Any],
+    ) -> dict[str, Any]:
+        homework = detail_context["homework"]
+        values = parse_page_values(
+            str(detail_context["html"]),
+            ("courseId", "classId", "cpi", "workId", "answerId", "enc"),
+        )
+        entry_query = {
+            key.casefold(): items[-1]
+            for key, items in parse_qs(
+                urlparse(str(homework.get("entry_url") or "")).query,
+                keep_blank_values=True,
+            ).items()
+            if items
+        }
+        fallbacks = {
+            "courseId": course.get("course_id") or entry_query.get("courseid"),
+            "classId": course.get("clazz_id") or entry_query.get("classid"),
+            "cpi": course.get("cpi") or entry_query.get("cpi"),
+            "workId": homework.get("work_id") or entry_query.get("workid"),
+            "answerId": homework.get("answer_id") or entry_query.get("answerid"),
+            "enc": entry_query.get("enc"),
+        }
+        for key, fallback in fallbacks.items():
+            values[key] = values[key] or str(fallback or "")
+        missing = [key for key, value in values.items() if not str(value or "").strip()]
+        if missing:
+            raise ChaoxingAPIError(
+                "learner homework page does not expose answer-history context: "
+                + ", ".join(missing)
+            )
+        endpoint = validated_chaoxing_url(
+            urljoin(
+                str(detail_context["response"].url),
+                "/mooc-ans/mooc2/work/answer-list",
+            ),
+            "learner homework answer-history URL",
+        )
+        try:
+            response = detail_context["session"].get(
+                endpoint,
+                params=values,
+                timeout=max(self.timeout, 60),
+                headers={
+                    "Referer": str(detail_context["response"].url),
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ChaoxingAPIError(
+                f"learner homework answer-history request failed: {type(exc).__name__}"
+            ) from exc
+        validated_chaoxing_url(response.url, "learner homework answer-history final URL")
+        html = self._decode(response)
+        if "passport2.chaoxing.com/login" in response.url.casefold() or (
+            "passport2.chaoxing.com/login" in html.casefold()
+        ):
+            raise ChaoxingAPIError("learner homework answer history was redirected to login")
+        return {
+            "response": response,
+            "html": html,
+            "values": values,
+            **parse_learning_homework_attempts(html),
+        }
+
+    def read_learning_homework(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+    ) -> dict[str, Any]:
+        context = self._learning_homework_detail_context(course, homework_query)
+        homework = context["homework"]
+        response = context["response"]
+        _, postcondition = self._verify_learning_homework_state_unchanged(
+            course,
+            homework,
+            "reading its detail",
+        )
+        final = urlparse(response.url)
         return {
             **self._learning_course_result(course),
-            "homework": public_homework,
+            "homework": self._public_learning_homework(homework),
+            "page": {
+                "host": final.netloc,
+                "path": final.path,
+                "http_status": response.status_code,
+            },
+            **context["detail"],
+            "state_unchanged": True,
+            "postcondition": postcondition,
+            "verification": (
+                "learner homework detail parsed through HTTP; list status and answer ID "
+                "were unchanged after reading; no save or submit request was sent"
+            ),
+        }
+
+    def list_learning_homework_attempts(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+    ) -> dict[str, Any]:
+        context = self._learning_homework_detail_context(course, homework_query)
+        history = self._learning_homework_attempts_context(course, context)
+        _, postcondition = self._verify_learning_homework_state_unchanged(
+            course,
+            context["homework"],
+            "reading its answer history",
+        )
+        final = urlparse(history["response"].url)
+        return {
+            **self._learning_course_result(course),
+            "homework": self._public_learning_homework(context["homework"]),
+            "page": {
+                "host": final.netloc,
+                "path": final.path,
+                "http_status": history["response"].status_code,
+            },
+            "attempt_count": history["attempt_count"],
+            "attempts": history["attempts"],
+            "empty_message": history["empty_message"],
+            "history_available": history["history_available"],
+            "state_unchanged": True,
+            "postcondition": postcondition,
+            "verification": (
+                "learner homework answer history parsed through HTTP; list status and answer ID "
+                "were unchanged; no answer page, save, redo, or submit request was sent"
+            ),
+        }
+
+    def read_learning_homework_attempt(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+        attempt_query: str,
+    ) -> dict[str, Any]:
+        context = self._learning_homework_detail_context(course, homework_query)
+        history = self._learning_homework_attempts_context(course, context)
+        attempt = resolve_learning_homework_attempt(history["attempts"], attempt_query)
+        endpoint = validated_chaoxing_url(
+            urljoin(
+                str(history["response"].url),
+                "/mooc-ans/mooc2/work/view",
+            ),
+            "learner homework attempt URL",
+        )
+        params = {**history["values"], "selectTimes": str(attempt["times"])}
+        try:
+            response = context["session"].get(
+                endpoint,
+                params=params,
+                timeout=max(self.timeout, 60),
+                allow_redirects=True,
+                headers={"Referer": str(history["response"].url)},
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ChaoxingAPIError(
+                f"learner homework attempt request failed: {type(exc).__name__}"
+            ) from exc
+        validated_chaoxing_url(response.url, "learner homework attempt final URL")
+        final_query = {
+            key.casefold(): items[-1]
+            for key, items in parse_qs(urlparse(response.url).query).items()
+            if items
+        }
+        if final_query.get("selecttimes") != str(attempt["times"]):
+            raise ChaoxingAPIError(
+                "learner homework attempt response did not preserve the selected attempt"
+            )
+        html = self._decode(response)
+        if "passport2.chaoxing.com/login" in response.url.casefold() or (
+            "passport2.chaoxing.com/login" in html.casefold()
+        ):
+            raise ChaoxingAPIError("learner homework attempt was redirected to login")
+        detail = parse_learning_homework_detail(html)
+        homework = context["homework"]
+        if detail["work_id"] and detail["work_id"] != homework["work_id"]:
+            raise ChaoxingAPIError("learner homework attempt did not match the selected work")
+        detail["work_id"] = detail["work_id"] or homework["work_id"]
+        detail["answer_id"] = detail["answer_id"] or homework["answer_id"]
+        detail["course_id"] = detail["course_id"] or course["course_id"]
+        detail["clazz_id"] = detail["clazz_id"] or course["clazz_id"]
+        detail["title"] = detail["title"] or homework["title"]
+        _, postcondition = self._verify_learning_homework_state_unchanged(
+            course,
+            homework,
+            "reading a historical attempt",
+        )
+        final = urlparse(response.url)
+        return {
+            **self._learning_course_result(course),
+            "homework": self._public_learning_homework(homework),
+            "attempt": attempt,
             "page": {
                 "host": final.netloc,
                 "path": final.path,
@@ -20622,9 +20930,10 @@ class ChaoxingAPI:
             },
             **detail,
             "state_unchanged": True,
+            "postcondition": postcondition,
             "verification": (
-                "learner homework detail parsed through HTTP; list status and answer ID "
-                "were unchanged after reading; no save or submit request was sent"
+                "selected learner homework attempt parsed through HTTP; list status and "
+                "answer ID were unchanged; no save, redo, or submit request was sent"
             ),
         }
 
