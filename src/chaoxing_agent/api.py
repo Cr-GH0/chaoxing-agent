@@ -38,6 +38,7 @@ LEARNING_SECRET_QUERY_NAMES = {
     "examenc",
     "penc",
     "token",
+    "urltoken",
 }
 UPLOAD_BASE_URL = "https://mooc1.chaoxing.com/upload-ans"
 NOTICE_LIST_URL = "https://notice.chaoxing.com/pc/course/notice/getNoticeList"
@@ -612,6 +613,28 @@ def redact_url_query_values(url: str, names: set[str]) -> str:
         for key, value in parse_qsl(parsed.query, keep_blank_values=True)
     ]
     return parsed._replace(query=urlencode(pairs)).geturl()
+
+
+def redact_mapping_secret_values(value: Any, names: set[str]) -> Any:
+    """Recursively redact named secrets while preserving a response's public shape."""
+
+    sensitive = {name.casefold() for name in names}
+    if isinstance(value, dict):
+        return {
+            key: (
+                "[redacted]"
+                if str(key).casefold() in sensitive and bool(item)
+                else redact_mapping_secret_values(item, names)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_mapping_secret_values(item, names) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_mapping_secret_values(item, names) for item in value)
+    if isinstance(value, str) and re.match(r"^https?://", value, flags=re.IGNORECASE):
+        return redact_url_query_values(value, names)
+    return value
 
 
 def parse_page_values(html: str, names: tuple[str, ...]) -> dict[str, str]:
@@ -5813,6 +5836,7 @@ def parse_discussion_topic(raw: dict[str, Any]) -> dict[str, Any]:
     images = raw.get("content_imgs", raw.get("img_data"))
     if not isinstance(images, list):
         images = []
+    images = redact_mapping_secret_values(images, LEARNING_SECRET_QUERY_NAMES)
     last_reply = raw.get("lastReply")
     if not isinstance(last_reply, dict):
         last_reply = {}
@@ -5822,6 +5846,7 @@ def parse_discussion_topic(raw: dict[str, Any]) -> dict[str, Any]:
     permissions = raw.get("userAuth")
     if not isinstance(permissions, dict):
         permissions = {}
+    permissions = redact_mapping_secret_values(permissions, LEARNING_SECRET_QUERY_NAMES)
     return {
         "topic_id": str(raw.get("id") or "").strip(),
         "uuid": str(raw.get("uuid") or "").strip(),
@@ -5850,9 +5875,14 @@ def parse_discussion_topic(raw: dict[str, Any]) -> dict[str, Any]:
         "reply_setting": quote_info.get("replySetting")
         if isinstance(quote_info.get("replySetting"), dict)
         else {},
-        "share_url": str(raw.get("shareUrl") or ""),
+        "share_url": redact_url_query_values(
+            str(raw.get("shareUrl") or ""), LEARNING_SECRET_QUERY_NAMES
+        ),
         "images": images,
-        "score": raw.get("score") if isinstance(raw.get("score"), dict) else {},
+        "score": redact_mapping_secret_values(
+            raw.get("score") if isinstance(raw.get("score"), dict) else {},
+            LEARNING_SECRET_QUERY_NAMES,
+        ),
         "permissions": permissions,
         "last_reply": {
             "reply_id": str(last_reply.get("replyId") or ""),
@@ -5966,9 +5996,11 @@ def parse_discussion_replies(payload: dict[str, Any], *, is_top: bool) -> list[d
         attachments = raw.get("attachment")
         if not isinstance(attachments, list):
             attachments = []
+        attachments = redact_mapping_secret_values(attachments, LEARNING_SECRET_QUERY_NAMES)
         images = raw.get("img_data")
         if not isinstance(images, list):
             images = []
+        images = redact_mapping_secret_values(images, LEARNING_SECRET_QUERY_NAMES)
         children = raw.get("second_data")
         if not isinstance(children, list):
             children = []
@@ -5988,7 +6020,10 @@ def parse_discussion_replies(payload: dict[str, Any], *, is_top: bool) -> list[d
             "is_top": top or bool(raw.get("top")),
             "is_anonymous": bool(raw.get("isAnonymous")),
             "praise_count": raw.get("praiseCount"),
-            "score": raw.get("score") if isinstance(raw.get("score"), dict) else {},
+            "score": redact_mapping_secret_values(
+                raw.get("score") if isinstance(raw.get("score"), dict) else {},
+                LEARNING_SECRET_QUERY_NAMES,
+            ),
             "images": images,
             "attachments": attachments,
             "replies": [normalize(child, False) for child in children if isinstance(child, dict)],
@@ -7433,6 +7468,319 @@ def parse_learning_homework_answer_form(
         "save_available": save_available,
         "submit_available": submit_available,
     }
+
+
+LEARNING_HOMEWORK_ANSWER_TYPES: dict[str, str] = {
+    "0": "single_choice",
+    "1": "multiple_choice",
+    "2": "fill_blank",
+    "3": "true_false",
+    "4": "short_answer",
+    "6": "essay",
+    "8": "other",
+    "9": "programming",
+}
+
+
+def _learning_homework_submission_form_context(
+    html: str,
+    *,
+    base_url: str,
+) -> dict[str, Any]:
+    """Return the observed learner-answer POST form while keeping its values private."""
+
+    candidates: list[dict[str, Any]] = []
+    for opening in re.finditer(r"<form\b[^>]*>", str(html or ""), flags=re.I | re.S):
+        attrs = html_attrs(opening.group(0))
+        raw_action = str(attrs.get("action") or "").strip()
+        if not raw_action:
+            continue
+        candidate = urljoin(base_url, unescape(raw_action))
+        parsed = urlparse(candidate)
+        if not parsed.path.casefold().rstrip("/").endswith("/work/addstudentworknewweb"):
+            continue
+        endpoint = validated_chaoxing_url(
+            candidate,
+            "learner homework submission URL",
+        )
+        fragment = _html_element_fragment(str(html or ""), opening)
+        controls = _html_form_controls(fragment)
+        names = {name for name, _ in controls}
+        if "workAnswerId" not in names or not any(
+            re.fullmatch(r"answertype\d+", name, flags=re.I) for name in names
+        ):
+            continue
+        candidates.append(
+            {
+                "endpoint": endpoint,
+                "fragment": fragment,
+                "controls": controls,
+                "form_id": str(attrs.get("id") or ""),
+                "form_name": str(attrs.get("name") or ""),
+                "method": str(attrs.get("method") or "GET").upper(),
+            }
+        )
+    if not candidates:
+        raise ChaoxingAPIError(
+            "learner homework answer page does not expose the observed submission form"
+        )
+    if len(candidates) > 1:
+        raise ChaoxingAPIError("learner homework answer page exposes multiple submission forms")
+
+    context = candidates[0]
+    if context["method"] != "POST":
+        raise ChaoxingAPIError("learner homework submission form is not POST")
+    controls = context["controls"]
+    question_fields: list[dict[str, Any]] = []
+    seen_question_ids: set[str] = set()
+    for name, value in controls:
+        match = re.fullmatch(r"answertype(?P<question_id>\d+)", name, flags=re.I)
+        if not match:
+            continue
+        question_id = match.group("question_id")
+        if question_id in seen_question_ids:
+            raise ChaoxingAPIError(
+                f"learner homework submission form repeats question type {question_id}"
+            )
+        seen_question_ids.add(question_id)
+        answer_names = sorted(
+            {
+                control_name
+                for control_name, _ in controls
+                if re.fullmatch(
+                    rf"(?:answer|answerEditor|answercheck|tiankongsize){re.escape(question_id)}\d*",
+                    control_name,
+                    flags=re.I,
+                )
+            }
+        )
+        question_fields.append(
+            {
+                "question_id": question_id,
+                "answer_type_code": str(value),
+                "answer_type": LEARNING_HOMEWORK_ANSWER_TYPES.get(str(value), "unknown"),
+                "answer_fields": answer_names,
+            }
+        )
+    if not question_fields:
+        raise ChaoxingAPIError("learner homework submission form has no question bindings")
+
+    parsed = urlparse(context["endpoint"])
+    context["question_fields"] = question_fields
+    context["public"] = {
+        "form_id": context["form_id"],
+        "form_name": context["form_name"],
+        "method": context["method"],
+        "action": {
+            "host": parsed.netloc,
+            "path": parsed.path,
+            "query_keys": sorted(
+                {key for key, _ in parse_qsl(parsed.query, keep_blank_values=True)}
+            ),
+        },
+        "question_count": len(question_fields),
+        "question_fields": question_fields,
+        "preserves_unmodified_controls": True,
+    }
+    return context
+
+
+def parse_learning_homework_submission_form(
+    html: str,
+    *,
+    base_url: str = MOOC1_BASE_URL,
+) -> dict[str, Any]:
+    """Describe the current learner homework save/submit form without returning values."""
+
+    return _learning_homework_submission_form_context(html, base_url=base_url)["public"]
+
+
+def _learning_homework_question_field(
+    question_fields: list[dict[str, Any]],
+    question_id: str,
+) -> dict[str, Any]:
+    matches = [
+        item for item in question_fields if str(item.get("question_id") or "") == question_id
+    ]
+    if len(matches) != 1:
+        raise ChaoxingAPIError(
+            f"learner homework answer form does not bind question {question_id} exactly once"
+        )
+    return matches[0]
+
+
+def _learning_homework_choice_labels(
+    question: dict[str, Any],
+    answer: Any,
+    *,
+    multiple: bool,
+) -> str:
+    raw_values: list[str]
+    if isinstance(answer, (list, tuple)):
+        raw_values = [str(item).strip() for item in answer]
+    else:
+        raw = str(answer or "").strip()
+        if multiple and re.fullmatch(r"[A-Za-z]+", raw):
+            raw_values = list(raw)
+        elif multiple and ("," in raw or "，" in raw):
+            raw_values = [item.strip() for item in re.split(r"[,，]", raw)]
+        else:
+            raw_values = [raw]
+    raw_values = [item for item in raw_values if item]
+    if not raw_values or (not multiple and len(raw_values) != 1):
+        raise ChaoxingAPIError("choice answer must select the required number of options")
+
+    options = list(question.get("options") or [])
+    labels: list[str] = []
+    for raw in raw_values:
+        normalized = raw.casefold()
+        matches = [
+            str(option.get("label") or "").upper()
+            for option in options
+            if normalized
+            in {
+                str(option.get("label") or "").strip().casefold(),
+                str(option.get("text") or "").strip().casefold(),
+            }
+        ]
+        if len(matches) == 1:
+            label = matches[0]
+        elif re.fullmatch(r"[A-Za-z]", raw):
+            label = raw.upper()
+        else:
+            raise ChaoxingAPIError(f"homework option not found or ambiguous: {raw}")
+        if label not in labels:
+            labels.append(label)
+    if not multiple and len(labels) != 1:
+        raise ChaoxingAPIError("single-choice answer must select exactly one option")
+    option_order = {
+        str(option.get("label") or "").upper(): index for index, option in enumerate(options)
+    }
+    labels.sort(key=lambda label: option_order.get(label, len(option_order)))
+    return "".join(labels)
+
+
+def _learning_homework_true_false_value(answer: Any) -> str:
+    if isinstance(answer, bool):
+        return "true" if answer else "false"
+    normalized = str(answer or "").strip().casefold()
+    if normalized in {"true", "1", "yes", "right", "correct", "对", "正确", "是"}:
+        return "true"
+    if normalized in {"false", "0", "no", "wrong", "incorrect", "错", "错误", "否"}:
+        return "false"
+    raise ChaoxingAPIError("true/false answer must be a boolean or an unambiguous judgment")
+
+
+def _learning_homework_apply_answer_updates(
+    controls: list[tuple[str, str]],
+    questions: list[dict[str, Any]],
+    question_fields: list[dict[str, Any]],
+    updates: list[dict[str, Any]],
+) -> tuple[list[tuple[str, str]], list[dict[str, Any]], dict[str, list[str]]]:
+    if not isinstance(updates, list) or not updates:
+        raise ChaoxingAPIError("at least one learner homework answer update is required")
+    updated_controls = list(controls)
+    applied: list[dict[str, Any]] = []
+    expected: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for update in updates:
+        if not isinstance(update, dict):
+            raise ChaoxingAPIError("each learner homework answer update must be an object")
+        query = str(update.get("question") or update.get("question_id") or "").strip()
+        question = resolve_homework_question(questions, query)
+        question_id = str(question.get("question_id") or "").strip()
+        if not question_id:
+            raise ChaoxingAPIError(f"homework question {query} has no stable ID")
+        if question_id in seen:
+            raise ChaoxingAPIError(f"homework question updated more than once: {query}")
+        seen.add(question_id)
+        binding = _learning_homework_question_field(question_fields, question_id)
+        type_code = str(binding.get("answer_type_code") or "")
+        answer = update.get("answer")
+        changed: dict[str, list[str]] = {}
+
+        if type_code == "0":
+            value = _learning_homework_choice_labels(question, answer, multiple=False)
+            name = f"answer{question_id}"
+            _set_form_control(updated_controls, name, value)
+            changed[name] = [value]
+        elif type_code == "1":
+            value = _learning_homework_choice_labels(question, answer, multiple=True)
+            name = f"answer{question_id}"
+            _set_form_control(updated_controls, name, value)
+            changed[name] = [value]
+        elif type_code == "2":
+            values = list(answer) if isinstance(answer, (list, tuple)) else [answer]
+            normalized_values = [str(value) for value in values]
+            if not normalized_values:
+                raise ChaoxingAPIError("fill-blank answer must contain at least one blank")
+            prefixes = (f"answerEditor{question_id}", f"answer{question_id}")
+            updated_controls[:] = [
+                (name, value)
+                for name, value in updated_controls
+                if not any(re.fullmatch(rf"{re.escape(prefix)}\d+", name) for prefix in prefixes)
+            ]
+            size_name = f"tiankongsize{question_id}"
+            _set_form_control(updated_controls, size_name, len(normalized_values))
+            changed[size_name] = [str(len(normalized_values))]
+            for index, value in enumerate(normalized_values, 1):
+                name = f"answerEditor{question_id}{index}"
+                _set_form_control(updated_controls, name, value)
+                changed[name] = [value]
+        elif type_code == "3":
+            value = _learning_homework_true_false_value(answer)
+            name = f"answer{question_id}"
+            _set_form_control(updated_controls, name, value)
+            changed[name] = [value]
+        elif type_code in {"4", "6", "8"}:
+            if not isinstance(answer, str):
+                raise ChaoxingAPIError("written homework answer must be text")
+            candidates = [
+                name
+                for name in (f"answer{question_id}", f"answerEditor{question_id}")
+                if _control_values(updated_controls, name)
+            ]
+            name = candidates[0] if candidates else f"answer{question_id}"
+            _set_form_control(updated_controls, name, answer)
+            changed[name] = [answer]
+        elif type_code == "9":
+            values = list(answer) if isinstance(answer, (list, tuple)) else [answer]
+            normalized_values = [str(value) for value in values]
+            if not normalized_values:
+                raise ChaoxingAPIError("programming answer must contain at least one editor value")
+            updated_controls[:] = [
+                (name, value)
+                for name, value in updated_controls
+                if not re.fullmatch(rf"answerEditor{re.escape(question_id)}\d+", name)
+            ]
+            size_name = f"tiankongsize{question_id}"
+            _set_form_control(updated_controls, size_name, len(normalized_values))
+            changed[size_name] = [str(len(normalized_values))]
+            for index, value in enumerate(normalized_values, 1):
+                name = f"answerEditor{question_id}{index}"
+                escaped = escape(value)
+                editor_value = f"<p>{escaped}<br/></p>"
+                _set_form_control(updated_controls, name, editor_value)
+                changed[name] = [editor_value]
+        else:
+            raise ChaoxingAPIError(
+                f"learner homework answer type is not yet writable: {type_code or 'unknown'}"
+            )
+        expected.update(changed)
+        applied.append(
+            {
+                "question": query,
+                "question_index": question.get("index"),
+                "question_id": question_id,
+                "question_type": binding.get("answer_type"),
+                "field_names": sorted(changed),
+            }
+        )
+
+    all_question_ids = [str(item.get("question_id") or "") for item in question_fields]
+    all_question_ids = [question_id for question_id in all_question_ids if question_id]
+    _set_form_control(updated_controls, "answerwqbid", ",".join(all_question_ids) + ",")
+    return updated_controls, applied, expected
 
 
 def parse_learning_materials(html: str) -> list[dict[str, Any]]:
@@ -17331,7 +17679,11 @@ class ChaoxingAPI:
             if page == 1:
                 displayed_folders = page_folders
                 raw_permissions = payload.get("userAuth")
-                permissions = raw_permissions if isinstance(raw_permissions, dict) else {}
+                permissions = (
+                    redact_mapping_secret_values(raw_permissions, LEARNING_SECRET_QUERY_NAMES)
+                    if isinstance(raw_permissions, dict)
+                    else {}
+                )
             poff = payload.get("poff") if isinstance(payload.get("poff"), dict) else {}
             if bool(poff.get("lastPage")) or not page_topics:
                 break
@@ -21038,7 +21390,7 @@ class ChaoxingAPI:
             ),
         }
 
-    def enter_learning_homework_answer(
+    def _learning_homework_answer_context(
         self,
         course: dict[str, Any],
         homework_query: str,
@@ -21142,7 +21494,7 @@ class ChaoxingAPI:
             "answer_id_in_form": str(form.get("answer_id") or ""),
             "answer_form_detected": True,
         }
-        return {
+        result = {
             **self._learning_course_result(course),
             "homework": self._public_learning_homework(homework),
             "page": {
@@ -21159,6 +21511,293 @@ class ChaoxingAPI:
             "verification": (
                 "reached the learner homework answer form for the selected work through HTTP; "
                 "no answer save or submit request was sent"
+            ),
+        }
+        return {
+            "session": context["session"],
+            "response": response,
+            "html": html,
+            "homework": homework,
+            "after": after,
+            "form": form,
+            "result": result,
+        }
+
+    def enter_learning_homework_answer(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+        *,
+        _detail_context: dict[str, Any] | None = None,
+        _redo_acknowledged: bool = False,
+    ) -> dict[str, Any]:
+        return self._learning_homework_answer_context(
+            course,
+            homework_query,
+            _detail_context=_detail_context,
+            _redo_acknowledged=_redo_acknowledged,
+        )["result"]
+
+    @staticmethod
+    def _learning_homework_submission_url(endpoint: str, *, temporary: bool) -> str:
+        parsed = urlparse(endpoint)
+        pairs = parse_qsl(parsed.query, keep_blank_values=True)
+
+        def set_query(name: str, value: str | None) -> None:
+            nonlocal pairs
+            pairs = [(key, item) for key, item in pairs if key.casefold() != name.casefold()]
+            if value is not None:
+                pairs.append((name, value))
+
+        if not any(key.casefold() in {"formtype", "formtype2"} for key, _ in pairs):
+            set_query("formType", "post")
+        set_query("saveStatus", "1")
+        set_query("version", "1")
+        set_query("tempsave", "1" if temporary else None)
+        return parsed._replace(query=urlencode(pairs, doseq=True)).geturl()
+
+    def _post_learning_homework_form(
+        self,
+        answer_context: dict[str, Any],
+        controls: list[tuple[str, str]],
+        *,
+        temporary: bool,
+    ) -> dict[str, Any]:
+        submission = _learning_homework_submission_form_context(
+            str(answer_context["html"]),
+            base_url=str(answer_context["response"].url),
+        )
+        endpoint = validated_chaoxing_url(
+            self._learning_homework_submission_url(
+                str(submission["endpoint"]), temporary=temporary
+            ),
+            "learner homework save URL" if temporary else "learner homework submit URL",
+        )
+        try:
+            response = answer_context["session"].post(
+                endpoint,
+                data=controls,
+                timeout=max(self.timeout, 60),
+                headers={
+                    "Referer": str(answer_context["response"].url),
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            operation = "save" if temporary else "submit"
+            raise ChaoxingAPIError(
+                f"learner homework {operation} request failed: {type(exc).__name__}"
+            ) from exc
+        validated_chaoxing_url(
+            response.url,
+            "learner homework save final URL" if temporary else "learner homework submit final URL",
+        )
+        body = self._decode(response)
+        if "passport2.chaoxing.com/login" in response.url.casefold() or (
+            "passport2.chaoxing.com/login" in body.casefold()
+        ):
+            raise ChaoxingAPIError("learner homework mutation was redirected to login")
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ChaoxingAPIError("learner homework mutation response was not JSON") from exc
+        status = payload.get("status") if isinstance(payload, dict) else None
+        if str(status).strip().casefold() not in {"1", "true"}:
+            message = payload.get("msg") if isinstance(payload, dict) else ""
+            raise ChaoxingAPIError(str(message or "learner homework mutation was not acknowledged"))
+        final = urlparse(response.url)
+        return {
+            "payload": payload,
+            "request": {
+                "host": final.netloc,
+                "path": final.path,
+                "http_status": response.status_code,
+            },
+            "submission": submission,
+        }
+
+    def save_learning_homework_answers(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+        updates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        answer_context = self._learning_homework_answer_context(course, homework_query)
+        submission = _learning_homework_submission_form_context(
+            str(answer_context["html"]),
+            base_url=str(answer_context["response"].url),
+        )
+        controls, applied, expected = _learning_homework_apply_answer_updates(
+            list(submission["controls"]),
+            list(answer_context["form"]["questions"]),
+            list(submission["question_fields"]),
+            updates,
+        )
+        _set_form_control(controls, "pyFlag", "1")
+        mutation = self._post_learning_homework_form(
+            answer_context,
+            controls,
+            temporary=True,
+        )
+
+        refreshed = self._learning_homework_answer_context(
+            course,
+            str(answer_context["homework"]["work_id"]),
+        )
+        refreshed_submission = _learning_homework_submission_form_context(
+            str(refreshed["html"]),
+            base_url=str(refreshed["response"].url),
+        )
+        mismatches: list[str] = []
+        for name, expected_values in expected.items():
+            actual_values = _control_values(refreshed_submission["controls"], name)
+            if actual_values == expected_values:
+                continue
+            if len(actual_values) == len(expected_values) and all(
+                html_text(actual) == html_text(wanted)
+                for actual, wanted in zip(actual_values, expected_values, strict=True)
+            ):
+                continue
+            mismatches.append(name)
+        if mismatches:
+            raise ChaoxingAPIError(
+                "learner homework save was acknowledged, but refreshed answers did not match: "
+                + ", ".join(mismatches)
+            )
+        after = refreshed["after"]
+        if str(after.get("status_key") or "") in {"submitted", "completed"}:
+            raise ChaoxingAPIError(
+                "learner homework temporary save unexpectedly changed the submission status"
+            )
+        payload = mutation["payload"]
+        return {
+            **self._learning_course_result(course),
+            "homework": self._public_learning_homework(answer_context["homework"]),
+            "updated_question_count": len(applied),
+            "updated_questions": applied,
+            "server_message": str(payload.get("msg") or ""),
+            "request": mutation["request"],
+            "postcondition": {
+                "status_before": str(answer_context["homework"].get("status") or ""),
+                "status_after": str(after.get("status") or ""),
+                "status_key_after": str(after.get("status_key") or ""),
+                "answer_id_before": str(answer_context["form"].get("answer_id") or ""),
+                "answer_id_after": str(refreshed["form"].get("answer_id") or ""),
+                "updated_fields_match": True,
+                "submitted": False,
+            },
+            "verification": (
+                "Chaoxing acknowledged the temporary save; a fresh answer form contained every "
+                "requested field value, unmodified controls were preserved in the POST, and the "
+                "homework remained unsubmitted"
+            ),
+        }
+
+    def submit_learning_homework(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+    ) -> dict[str, Any]:
+        answer_context = self._learning_homework_answer_context(course, homework_query)
+        submission = _learning_homework_submission_form_context(
+            str(answer_context["html"]),
+            base_url=str(answer_context["response"].url),
+        )
+        controls = list(submission["controls"])
+        question_ids = [
+            str(item.get("question_id") or "") for item in submission["question_fields"]
+        ]
+        question_ids = [question_id for question_id in question_ids if question_id]
+        _set_form_control(controls, "answerwqbid", ",".join(question_ids) + ",")
+        _set_form_control(controls, "pyFlag", "")
+
+        validation_values = {
+            "courseId": (_control_values(controls, "courseId") or [course.get("course_id")])[0],
+            "classId": (_control_values(controls, "classId") or [course.get("clazz_id")])[0],
+            "cpi": (_control_values(controls, "cpi") or [course.get("cpi")])[0],
+        }
+        missing = [key for key, value in validation_values.items() if not str(value or "").strip()]
+        if missing:
+            raise ChaoxingAPIError(
+                "learner homework submission form lacks validation context: " + ", ".join(missing)
+            )
+        validate_endpoint = validated_chaoxing_url(
+            MOOC1_BASE_URL + "/work/validate",
+            "learner homework validation URL",
+        )
+        try:
+            validation = answer_context["session"].get(
+                validate_endpoint,
+                params=validation_values,
+                timeout=max(self.timeout, 60),
+                headers={
+                    "Referer": str(answer_context["response"].url),
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            validation.raise_for_status()
+        except requests.RequestException as exc:
+            raise ChaoxingAPIError(
+                f"learner homework validation request failed: {type(exc).__name__}"
+            ) from exc
+        validated_chaoxing_url(validation.url, "learner homework validation final URL")
+        validation_body = self._decode(validation)
+        if "passport2.chaoxing.com/login" in validation.url.casefold() or (
+            "passport2.chaoxing.com/login" in validation_body.casefold()
+        ):
+            raise ChaoxingAPIError("learner homework validation was redirected to login")
+
+        mutation = self._post_learning_homework_form(
+            answer_context,
+            controls,
+            temporary=False,
+        )
+        after: dict[str, Any] | None = None
+        for attempt in range(3):
+            listed = self.list_learning_homeworks(course)
+            after = resolve_homework(
+                listed["homeworks"],
+                str(answer_context["homework"]["work_id"]),
+            )
+            if str(after.get("status_key") or "") in {"submitted", "completed"}:
+                break
+            if attempt < 2:
+                sleep(0.4)
+        if after is None or str(after.get("status_key") or "") not in {
+            "submitted",
+            "completed",
+        }:
+            raise ChaoxingAPIError(
+                "learner homework submission was acknowledged, but the refreshed list did not "
+                "show a submitted state"
+            )
+        payload = mutation["payload"]
+        validation_final = urlparse(validation.url)
+        return {
+            **self._learning_course_result(course),
+            "homework": self._public_learning_homework(answer_context["homework"]),
+            "submitted_question_count": len(question_ids),
+            "server_message": str(payload.get("msg") or ""),
+            "server_student_status": payload.get("stuStatus"),
+            "validation": {
+                "host": validation_final.netloc,
+                "path": validation_final.path,
+                "http_status": validation.status_code,
+            },
+            "request": mutation["request"],
+            "postcondition": {
+                "status_before": str(answer_context["homework"].get("status") or ""),
+                "status_after": str(after.get("status") or ""),
+                "status_key_after": str(after.get("status_key") or ""),
+                "answer_id_before": str(answer_context["form"].get("answer_id") or ""),
+                "answer_id_after": str(after.get("answer_id") or ""),
+                "submitted": True,
+            },
+            "verification": (
+                "the current answer form was validated and submitted through Chaoxing HTTP; the "
+                "server acknowledged the request and the refreshed homework list showed a "
+                "submitted state"
             ),
         }
 
@@ -21690,6 +22329,28 @@ class ChaoxingAPI:
             "verification": "learner model-specific graph data refreshed through HTTP",
         }
 
+    def _learning_discussion_context(self, course: dict[str, Any]) -> dict[str, Any]:
+        module = self._learning_module_response(course, "讨论")
+        course_context = module.get("course_context")
+        course_context = course_context if isinstance(course_context, dict) else {}
+        values = course_context.get("values")
+        values = values if isinstance(values, dict) else {}
+        bbs_id = str(values.get("bbsid") or "")
+        token_match = re.search(
+            r"\burlToken\s*:\s*(['\"])(.*?)\1",
+            str(module.get("html") or ""),
+            flags=re.S,
+        )
+        if not bbs_id:
+            raise ChaoxingAPIError("learner course response did not expose bbsid")
+        return {
+            "session": module["session"],
+            "module": module,
+            "referer": str(module["response"].url),
+            "bbs_id": bbs_id,
+            "url_token": token_match.group(2) if token_match else "",
+        }
+
     def list_learning_discussions(
         self,
         course: dict[str, Any],
@@ -21697,13 +22358,10 @@ class ChaoxingAPI:
         search: str = "",
         class_only: bool = False,
     ) -> dict[str, Any]:
-        module = self._learning_module_response(course, "讨论")
-        session = module["session"]
-        context = module["course_context"]
-        values = context.get("values") if isinstance(context.get("values"), dict) else {}
-        bbs_id = str(values.get("bbsid") or "")
-        if not bbs_id:
-            raise ChaoxingAPIError("learner course response did not expose bbsid")
+        discussion = self._learning_discussion_context(course)
+        module = discussion["module"]
+        session = discussion["session"]
+        bbs_id = discussion["bbs_id"]
         endpoint = f"{GROUPWEB_BASE_URL}/course/topic/{bbs_id}/getTopicList"
         topics: list[dict[str, Any]] = []
         folders: list[dict[str, Any]] = []
@@ -21753,7 +22411,11 @@ class ChaoxingAPI:
             if page == 1:
                 folders = page_folders
                 user_auth = payload.get("userAuth")
-                permissions = user_auth if isinstance(user_auth, dict) else {}
+                permissions = (
+                    redact_mapping_secret_values(user_auth, LEARNING_SECRET_QUERY_NAMES)
+                    if isinstance(user_auth, dict)
+                    else {}
+                )
             poff = payload.get("poff") if isinstance(payload.get("poff"), dict) else {}
             if bool(poff.get("lastPage")) or not page_topics:
                 break
@@ -21786,6 +22448,516 @@ class ChaoxingAPI:
             "folders": folders,
             "permissions": permissions,
             "verification": f"parsed {len(topics)} learner discussion topics through HTTP",
+        }
+
+    def _learning_discussion_selection(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        *,
+        class_only: bool = False,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        listing = self.list_learning_discussions(course, class_only=class_only)
+        selected = resolve_discussion_topic(listing["topics"], topic_query)
+        context = self._learning_discussion_context(course)
+        if context["bbs_id"] != listing["bbs_id"]:
+            raise ChaoxingAPIError("learner discussion context changed while resolving the topic")
+        raw, topic = self._discussion_topic_payload(
+            context["session"],
+            str(selected.get("uuid") or ""),
+            referer=context["referer"],
+        )
+        if topic["uuid"] != selected["uuid"] or topic["bbs_id"] != listing["bbs_id"]:
+            raise ChaoxingAPIError("learner discussion detail returned a different topic or course")
+        return listing, context, raw, topic
+
+    def read_learning_discussion_topic(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        *,
+        class_only: bool = False,
+        order: int = 2,
+        reply_search: str = "",
+    ) -> dict[str, Any]:
+        if order not in {1, 2}:
+            raise ChaoxingAPIError(
+                "learner discussion reply order must be 1 (oldest) or 2 (newest)"
+            )
+        listing, context, _raw_topic, topic = self._learning_discussion_selection(
+            course,
+            topic_query,
+            class_only=class_only,
+        )
+        bbs_id = listing["bbs_id"]
+        topic_uuid = topic["uuid"]
+        session = context["session"]
+        referer = context["referer"]
+
+        common_params = {
+            "bbsid": bbs_id,
+            "uuid": topic_uuid,
+            "tag": f"classId{course['clazz_id']}" if class_only else "",
+            "order": str(order),
+            "kw": reply_search.strip(),
+        }
+        top_payload = self._personal_group_json_request(
+            session,
+            "/pc/invitation/getTopReplyList",
+            "learner discussion top replies",
+            params=common_params,
+            referer=referer,
+        )
+        replies = parse_discussion_replies(top_payload, is_top=True)
+
+        last_value = ""
+        last_aux_value = ""
+        page_count = 0
+        complete = False
+        while page_count < 100:
+            payload = self._personal_group_json_request(
+                session,
+                "/pc/invitation/getReplyList",
+                "learner discussion replies",
+                params={
+                    **common_params,
+                    "lastValue": last_value,
+                    "lastAuxValue": last_aux_value,
+                },
+                referer=referer,
+            )
+            page_replies = parse_discussion_replies(payload, is_top=False)
+            replies.extend(page_replies)
+            page_count += 1
+            poff = payload.get("poff") if isinstance(payload.get("poff"), dict) else {}
+            if bool(poff.get("lastPage")) or not page_replies:
+                complete = True
+                break
+            next_value = str(poff.get("lastValue") or "")
+            next_aux_value = str(poff.get("lastAuxValue") or "")
+            if not next_value or (next_value, next_aux_value) == (
+                last_value,
+                last_aux_value,
+            ):
+                raise ChaoxingAPIError(
+                    "learner discussion reply pagination stopped before the last page"
+                )
+            last_value = next_value
+            last_aux_value = next_aux_value
+
+        unique_replies: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for reply in replies:
+            identity = str(reply.get("uuid") or reply.get("reply_id") or "")
+            if identity and identity in seen:
+                continue
+            if identity:
+                seen.add(identity)
+            reply["index"] = len(unique_replies) + 1
+            unique_replies.append(reply)
+
+        reply_scope = "matching visible replies" if reply_search.strip() else "visible replies"
+        verification = (
+            f"read learner discussion {topic_uuid} and all {len(unique_replies)} {reply_scope}"
+            if complete
+            else (
+                f"read learner discussion {topic_uuid} and {len(unique_replies)} {reply_scope}; "
+                "the 100-page safety limit was reached"
+            )
+        )
+        return {
+            **self._learning_course_result(course),
+            "scope": "selected_class" if class_only else "course_all_classes",
+            "reply_order": "oldest_first" if order == 1 else "newest_first",
+            "reply_search": reply_search.strip(),
+            "topic": topic,
+            "reported_reply_count": topic.get("reply_count"),
+            "reply_count": len(unique_replies),
+            "reply_page_count": page_count,
+            "complete": complete,
+            "replies": unique_replies,
+            "verification": verification,
+        }
+
+    @staticmethod
+    def _discussion_permission_enabled(permissions: dict[str, Any], name: str) -> bool:
+        return str(permissions.get(name) or "0").strip().casefold() in {"1", "true"}
+
+    def create_learning_discussion_topic(
+        self,
+        course: dict[str, Any],
+        title: str,
+        content: str,
+        *,
+        anonymous: bool = False,
+    ) -> dict[str, Any]:
+        title = title.strip()
+        content = content.strip()
+        if not title and not content:
+            raise ChaoxingAPIError("learner discussion title and content cannot both be empty")
+        if len(title) > 200:
+            raise ChaoxingAPIError("learner discussion title cannot exceed 200 characters")
+        listing = self.list_learning_discussions(course)
+        operation_auth = listing.get("permissions", {}).get("operationAuth", {})
+        if not isinstance(operation_auth, dict) or not self._discussion_permission_enabled(
+            operation_auth, "add"
+        ):
+            raise ChaoxingAPIError("current account cannot create a topic in this learner course")
+        if anonymous and not self._discussion_permission_enabled(
+            operation_auth, "anonymousModelButton"
+        ):
+            raise ChaoxingAPIError("this learner course does not allow anonymous topic creation")
+        context = self._learning_discussion_context(course)
+        if context["bbs_id"] != listing["bbs_id"]:
+            raise ChaoxingAPIError("learner discussion context changed before topic creation")
+        if not context["url_token"]:
+            raise ChaoxingAPIError("learner discussion page did not expose urlToken")
+
+        topic_uuid = uuid4().hex
+        payload = self._personal_group_json_request(
+            context["session"],
+            f"/pc/topic/{quote(context['bbs_id'], safe='')}/addTopic",
+            "learner discussion topic creation",
+            method="POST",
+            params={"uuid": topic_uuid},
+            data={
+                "topicTitle": quote(title, safe=""),
+                "topicContent": quote(content, safe=""),
+                "files_url": "",
+                "files_attr": "",
+                "bbsid": context["bbs_id"],
+                "courseId": course["course_id"],
+                "folder_uuid": "",
+                "anonymous": "1" if anonymous else "",
+                "label": "",
+                "tags": f"classId{course['clazz_id']}",
+                "urlToken": context["url_token"],
+            },
+            referer=context["referer"],
+        )
+        try:
+            _raw, created = self._discussion_topic_payload(
+                context["session"],
+                topic_uuid,
+                referer=context["referer"],
+            )
+        except ChaoxingAPIError:
+            if payload.get("msg") and not payload.get("objs"):
+                return {
+                    **self._learning_course_result(course),
+                    "scope": "selected_class",
+                    "topic_uuid": topic_uuid,
+                    "anonymous": anonymous,
+                    "pending_review": True,
+                    "server_message": str(payload.get("msg") or ""),
+                    "verification": "server accepted the learner discussion topic for review",
+                }
+            raise
+        if (
+            created["uuid"] != topic_uuid
+            or created["bbs_id"] != context["bbs_id"]
+            or created["title"] != title
+            or created["content"] != content
+        ):
+            raise ChaoxingAPIError("created learner discussion differs after refresh")
+        return {
+            **self._learning_course_result(course),
+            "scope": "selected_class",
+            "topic": created,
+            "anonymous": anonymous,
+            "pending_review": False,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"created and re-read learner discussion topic {topic_uuid}",
+        }
+
+    def update_learning_discussion_topic(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        *,
+        title: str | None = None,
+        content: str | None = None,
+    ) -> dict[str, Any]:
+        if title is None and content is None:
+            raise ChaoxingAPIError("learner discussion title or content change is required")
+        listing, context, _raw, before = self._learning_discussion_selection(course, topic_query)
+        operation_auth = before.get("permissions", {}).get("operationAuth", {})
+        if not isinstance(operation_auth, dict) or not self._discussion_permission_enabled(
+            operation_auth, "update"
+        ):
+            raise ChaoxingAPIError("current account cannot update this learner discussion")
+        next_title = before["title"] if title is None else title.strip()
+        next_content = before["content"] if content is None else content.strip()
+        if not next_title and not next_content:
+            raise ChaoxingAPIError("learner discussion title and content cannot both be empty")
+        if len(next_title) > 200:
+            raise ChaoxingAPIError("learner discussion title cannot exceed 200 characters")
+
+        clazz = {"clazz_id": course["clazz_id"]}
+        edit_url, editable = self._discussion_edit_page(
+            context["session"],
+            course,
+            clazz,
+            listing["bbs_id"],
+            before["uuid"],
+            context["referer"],
+        )
+        files_url, files_attr = self._discussion_asset_fields(editable)
+        is_rich = bool(editable.get("rtf_content")) or bool(editable.get("isRtf"))
+        data: dict[str, Any] = {
+            "edit_topicTitle": quote(next_title, safe=""),
+            "edit_topicContent": quote(next_content, safe=""),
+            "edit_files_url": files_url,
+            "edit_files_attr": quote(files_attr, safe=""),
+            "isRichText": "1" if is_rich else "0",
+        }
+        if is_rich:
+            rich_content = (
+                str(editable.get("rtf_content") or "")
+                if content is None
+                else f"<p>{escape(next_content)}</p>"
+            )
+            data["rtf_content"] = quote(rich_content, safe="")
+        payload = self._personal_group_json_request(
+            context["session"],
+            f"/course/topic/{quote(listing['bbs_id'], safe='')}/"
+            f"{quote(before['uuid'], safe='')}/updateTopic",
+            "learner discussion topic update",
+            method="POST",
+            data=data,
+            referer=edit_url,
+        )
+        _raw, updated = self._discussion_topic_payload(
+            context["session"], before["uuid"], referer=edit_url
+        )
+        if updated["title"] != next_title or updated["content"] != next_content:
+            raise ChaoxingAPIError("updated learner discussion differs after refresh")
+        return {
+            **self._learning_course_result(course),
+            "before": before,
+            "topic": updated,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"updated and re-read learner discussion topic {before['uuid']}",
+        }
+
+    def delete_learning_discussion_topic(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+    ) -> dict[str, Any]:
+        listing, context, _raw, topic = self._learning_discussion_selection(course, topic_query)
+        operation_auth = topic.get("permissions", {}).get("operationAuth", {})
+        if not isinstance(operation_auth, dict) or not self._discussion_permission_enabled(
+            operation_auth, "delete"
+        ):
+            raise ChaoxingAPIError("current account cannot delete this learner discussion")
+        payload = self._personal_group_json_request(
+            context["session"],
+            f"/pc/topic/{quote(listing['bbs_id'], safe='')}/"
+            f"{quote(topic['uuid'], safe='')}/deleteTopic",
+            "learner discussion topic deletion",
+            method="POST",
+            referer=context["referer"],
+        )
+        refreshed = self.list_learning_discussions(course, search=topic["title"])
+        if any(item["uuid"] == topic["uuid"] for item in refreshed["topics"]):
+            raise ChaoxingAPIError("deleted learner discussion still appears after refresh")
+        return {
+            **self._learning_course_result(course),
+            "deleted_topic": topic,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"learner discussion topic {topic['uuid']} is absent after refresh",
+        }
+
+    def create_learning_discussion_reply(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        content: str,
+        *,
+        reply_to: str = "",
+        anonymous: bool = False,
+    ) -> dict[str, Any]:
+        content = content.strip()
+        if not content:
+            raise ChaoxingAPIError("learner discussion reply content cannot be empty")
+        before = self.read_learning_discussion_topic(course, topic_query)
+        topic = before["topic"]
+        operation_auth = topic.get("permissions", {}).get("operationAuth", {})
+        if not isinstance(operation_auth, dict) or not self._discussion_permission_enabled(
+            operation_auth, "reply"
+        ):
+            raise ChaoxingAPIError("current account cannot reply to this learner discussion")
+        if anonymous and not self._discussion_permission_enabled(
+            operation_auth, "canAnonymousAddReply"
+        ):
+            raise ChaoxingAPIError("this learner discussion does not allow anonymous replies")
+        parent = resolve_discussion_reply(before["replies"], reply_to) if reply_to else None
+        session = self._session()
+        context = self._discussion_reply_context(
+            session,
+            course,
+            {"clazz_id": course["clazz_id"]},
+            topic["bbs_id"],
+            topic["uuid"],
+        )
+        reply_uuid = uuid4().hex
+        payload = self._personal_group_json_request(
+            session,
+            f"/pc/invitation/{quote(topic['uuid'], safe='')}/addReplys",
+            "learner discussion reply creation",
+            method="POST",
+            data={
+                "courseId": course["course_id"],
+                "classId": course["clazz_id"],
+                "replyId": parent["reply_id"] if parent else "-1",
+                "uuid": reply_uuid,
+                "topic_content": quote(content, safe=""),
+                "files_url": "",
+                "files_attr": "",
+                "anonymous": "1" if anonymous else "",
+                "urlToken": context["url_token"],
+                "bbsid": topic["bbs_id"],
+            },
+            referer=context["detail_url"],
+        )
+        if not isinstance(payload.get("datas"), dict):
+            return {
+                **self._learning_course_result(course),
+                "topic": topic,
+                "reply_uuid": reply_uuid,
+                "reply_to": parent,
+                "anonymous": anonymous,
+                "pending_review": True,
+                "server_message": str(payload.get("msg") or ""),
+                "verification": "server accepted the learner discussion reply for review",
+            }
+        refreshed = self.read_learning_discussion_topic(course, topic["uuid"])
+        created = resolve_discussion_reply(refreshed["replies"], reply_uuid)
+        if created["content"] != content:
+            raise ChaoxingAPIError("created learner discussion reply differs after refresh")
+        return {
+            **self._learning_course_result(course),
+            "topic": topic,
+            "reply": created,
+            "reply_to": parent,
+            "anonymous": anonymous,
+            "pending_review": False,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"created and re-read learner discussion reply {reply_uuid}",
+        }
+
+    def update_learning_discussion_reply(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        reply_query: str,
+        content: str,
+    ) -> dict[str, Any]:
+        content = content.strip()
+        if not content:
+            raise ChaoxingAPIError("learner discussion reply content cannot be empty")
+        before = self.read_learning_discussion_topic(course, topic_query)
+        topic = before["topic"]
+        reply = resolve_discussion_reply(before["replies"], reply_query)
+        reply_auth = topic.get("permissions", {}).get("replyAuth", {})
+        session = self._session()
+        context = self._discussion_reply_context(
+            session,
+            course,
+            {"clazz_id": course["clazz_id"]},
+            topic["bbs_id"],
+            topic["uuid"],
+        )
+        if not context.get("current_puid") or reply["creator_puid"] != context["current_puid"]:
+            raise ChaoxingAPIError("current account can update only its own learner reply")
+        if not isinstance(reply_auth, dict) or not self._discussion_permission_enabled(
+            reply_auth, "updateOwn"
+        ):
+            raise ChaoxingAPIError("current account cannot update this learner reply")
+        image_urls = [
+            str(item.get("imgUrl") or item.get("url") or "")
+            for item in reply.get("images", [])
+            if isinstance(item, dict)
+        ]
+        files_url = ";".join(url for url in image_urls if url)
+        files_attr = ",".join(
+            json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+            for item in reply.get("attachments", [])
+            if isinstance(item, dict)
+        )
+        payload = self._personal_group_json_request(
+            session,
+            f"/pc/invitation/{quote(topic['uuid'], safe='')}/updateReply",
+            "learner discussion reply update",
+            method="POST",
+            data={
+                "uuid": reply["uuid"],
+                "reply_content": quote(content, safe=""),
+                "reply_files_url": quote(files_url, safe=""),
+                "reply_files_attr": quote(files_attr, safe=""),
+            },
+            referer=context["detail_url"],
+        )
+        refreshed = self.read_learning_discussion_topic(course, topic["uuid"])
+        updated = resolve_discussion_reply(refreshed["replies"], reply["uuid"])
+        if updated["content"] != content:
+            raise ChaoxingAPIError("updated learner discussion reply differs after refresh")
+        return {
+            **self._learning_course_result(course),
+            "topic": topic,
+            "before": reply,
+            "reply": updated,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"updated and re-read learner discussion reply {reply['uuid']}",
+        }
+
+    def delete_learning_discussion_reply(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        reply_query: str,
+    ) -> dict[str, Any]:
+        before = self.read_learning_discussion_topic(course, topic_query)
+        topic = before["topic"]
+        reply = resolve_discussion_reply(before["replies"], reply_query)
+        reply_auth = topic.get("permissions", {}).get("replyAuth", {})
+        session = self._session()
+        context = self._discussion_reply_context(
+            session,
+            course,
+            {"clazz_id": course["clazz_id"]},
+            topic["bbs_id"],
+            topic["uuid"],
+        )
+        if not context.get("current_puid") or reply["creator_puid"] != context["current_puid"]:
+            raise ChaoxingAPIError("current account can delete only its own learner reply")
+        if not isinstance(reply_auth, dict) or not self._discussion_permission_enabled(
+            reply_auth, "delete"
+        ):
+            raise ChaoxingAPIError("current account cannot delete this learner reply")
+        payload = self._personal_group_json_request(
+            session,
+            f"/pc/invitation/{quote(topic['uuid'], safe='')}/deleteReply",
+            "learner discussion reply deletion",
+            method="POST",
+            params={"uuid": reply["uuid"]},
+            referer=context["detail_url"],
+        )
+        refreshed = self.read_learning_discussion_topic(course, topic["uuid"])
+        try:
+            resolve_discussion_reply(refreshed["replies"], reply["uuid"])
+        except ChaoxingAPIError as exc:
+            if "not found" not in str(exc):
+                raise
+        else:
+            raise ChaoxingAPIError("deleted learner discussion reply still appears after refresh")
+        return {
+            **self._learning_course_result(course),
+            "topic": topic,
+            "deleted_reply": reply,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"learner discussion reply {reply['uuid']} is absent after refresh",
         }
 
     @staticmethod
@@ -49854,7 +51026,11 @@ class ChaoxingAPI:
             if page == 1:
                 folders = page_folders
                 user_auth = payload.get("userAuth")
-                permissions = user_auth if isinstance(user_auth, dict) else {}
+                permissions = (
+                    redact_mapping_secret_values(user_auth, LEARNING_SECRET_QUERY_NAMES)
+                    if isinstance(user_auth, dict)
+                    else {}
+                )
             poff = payload.get("poff") if isinstance(payload.get("poff"), dict) else {}
             if bool(poff.get("lastPage")) or not page_topics:
                 break
@@ -50034,7 +51210,24 @@ class ChaoxingAPI:
         url_token = token_match.group(2) if token_match else ""
         if not url_token:
             raise ChaoxingAPIError("discussion reply page did not expose urlToken")
-        return {"detail_url": response.url, "url_token": url_token}
+        current_puid = ""
+        object_marker = re.search(r"window\.obj\s*=\s*", html)
+        object_text = html[object_marker.end() :] if object_marker else html
+        user_marker = re.search(r"\buser\s*:\s*", object_text)
+        if user_marker:
+            try:
+                user, _end = json.JSONDecoder().raw_decode(
+                    object_text[user_marker.end() :].lstrip()
+                )
+            except json.JSONDecodeError:
+                user = {}
+            if isinstance(user, dict):
+                current_puid = str(user.get("puid") or "")
+        return {
+            "detail_url": response.url,
+            "url_token": url_token,
+            "current_puid": current_puid,
+        }
 
     def create_discussion_reply(
         self,

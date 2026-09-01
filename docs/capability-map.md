@@ -6,12 +6,12 @@
 
 | 状态 | 数量 | 含义 |
 | --- | ---: | --- |
-| `implemented` | 554 | 存在可调用的动作、统一运行时分发和测试 |
-| `live_verified` | 394 | 该动作已在真实平台上执行并检查后置条件 |
-| `implemented` 但未标记实测 | 160 | 已实现并有自动测试，但当前账号未安全执行该精确动作 |
+| `implemented` | 563 | 存在可调用的动作、统一运行时分发和测试 |
+| `live_verified` | 395 | 该动作已在真实平台上执行并检查后置条件 |
+| `implemented` 但未标记实测 | 168 | 已实现并有自动测试，但当前账号未安全执行该精确动作 |
 | `observed` surface marker | 43 | 17 个教师课程入口、14 个个人空间入口和 12 个学生课程入口的导航事实 |
 
-`observed` 是入口标记，不等于 43 个未实现功能。例如教师侧“课程图谱”既有一个入口标记，也有 42 个具体语义动作；学生侧 12 个入口中已有 11 个对应独立只读语义领域，只有直播课/见面课仍只有通用入口读取。
+`observed` 是入口标记，不等于 43 个未实现功能。例如教师侧“课程图谱”既有一个入口标记，也有 42 个具体语义动作；学生侧 12 个入口中已有 11 个对应独立语义领域，只有直播课/见面课仍只有通用入口读取。
 
 能力响应中的 `surface_coverage` 会把每个入口映射到对应语义领域和已实现动作数量；平台当前只提供通用入口读取、没有独立对象操作的页面标记为 `generic_entry_only`。
 
@@ -32,8 +32,8 @@ uv run chaoxing-agent capabilities
 | `learning` | 5 | 我学的课、学生课程入口、模块读取与诚信承诺状态 |
 | `learning_activities` | 1 | 学生课程活动、学习计划任务与 AI 练习活动聚合读取 |
 | `learning_chapters` | 1 | 学生章节、编号与待完成任务点读取 |
-| `learning_discussions` | 1 | 学生课程讨论列表与本地关键词筛选 |
-| `learning_homework` | 6 | 学生作业列表、答题入口、重做、题目、附件、当前答案与历次作答 |
+| `learning_discussions` | 8 | 学生讨论列表、详情、回复与本人内容增删改 |
+| `learning_homework` | 8 | 学生作业列表、答题入口、答案暂存、提交、重做、题目、附件、当前答案与历次作答 |
 | `learning_exams` | 1 | 学生考试列表与完成状态读取 |
 | `learning_self_tests` | 1 | 学生自测列表与完成状态读取 |
 | `learning_materials` | 1 | 学生资料根目录与一级文件夹读取 |
@@ -67,19 +67,19 @@ uv run chaoxing-agent capabilities
 | `job_ability` | 9 | 招聘搜索、详情、热门岗位、职业百科与行业岗位库 |
 | `system` | 3 | 能力目录、命令计划与自然语言执行 |
 
-合计 554 个动作。
+合计 563 个动作。
 
 ## 风险分布
 
 | 风险 | 数量 |
 | --- | ---: |
-| `read` | 204 |
+| `read` | 205 |
 | `navigate` | 1 |
 | `draft` | 54 |
-| `write` | 96 |
-| `publish` | 93 |
+| `write` | 97 |
+| `publish` | 98 |
 | `permission` | 23 |
-| `delete` | 82 |
+| `delete` | 84 |
 | `purchase` | 1 |
 
 高风险动作是否需要确认由动作目录逐项决定；发布、权限、删除、成绩提交和额度消费均经过一次性确认门。
@@ -96,17 +96,17 @@ uv run chaoxing-agent capabilities
 
 在当前账号的一门完整学生课程页中观察到 12 个入口：AI助教、任务、章节、讨论、作业、考试、资料、错题集、学习记录、课程图谱、自测、直播课/见面课。不同课程实际开放的入口不同，`learning.course.modules.discover` 每次从所选课程当前页面动态解析，`learning.course.module.open` 按学生页面使用的参数规则构造 HTTP 请求。
 
-其中 11 类内容已有 19 个独立语义动作：
+其中 11 类内容已有 28 个独立语义动作：
 
 - `learning.course.activities.list` 聚合课堂活动、学习计划任务和 AI 练习活动，但不打开任务；
 - `learning.course.chapters.list` 读取单元、章节编号、标题和待完成任务点；
-- `learning.course.discussions.list` 读取课程讨论，并在班级范围内安全进行本地关键词筛选；
-- `learning.course.homeworks.list`、`learning.course.exams.list` 和 `learning.course.self_tests.list` 只解析列表页，不进入项目、启动作答、改变计时或提交状态；`learning.course.homework.read` 读取指定作业的时间、题型、题干、附件和当前答案，若下一跳是 `/dowork` 则在请求答题表单前停止；只有显式调用 `learning.course.homework.answer.enter` 才进入答题表单，该动作可能创建或恢复答题实例，但不会保存或提交；`learning.course.homework.redo` 经一次性确认后覆盖上一份作答并回读新答题表单；`learning.course.homework.attempts.list` 读取历次作答索引，`learning.course.homework.attempt.read` 按页面提供的 `selectTimes` 读取一份历史答案。三项作业读取动作都会复核列表状态与 `answer_id` 未变化；
+- `learning.course.discussions.list` 读取课程讨论，并在班级范围内安全进行本地关键词筛选；`learning.course.discussions.topic.read` 读取主题正文，并分页读取全部当前可见回复；发帖、回复、编辑和删除动作使用当前学生页面公开的 Groupweb HTTP 协议，固定把学生新话题发布到当前班级，只允许编辑或删除页面授权且属于当前账号的内容，并统一经过一次性确认门；
+- `learning.course.homeworks.list`、`learning.course.exams.list` 和 `learning.course.self_tests.list` 只解析列表页，不进入项目、启动作答、改变计时或提交状态；`learning.course.homework.read` 读取指定作业的时间、题型、题干、附件和当前答案，若下一跳是 `/dowork` 则在请求答题表单前停止；只有显式调用 `learning.course.homework.answer.enter` 才进入答题表单，该动作可能创建或恢复答题实例，但不会保存或提交；`learning.course.homework.answers.save` 按题号、题目 ID 或唯一题干局部更新答案，保留表单中未修改字段，以临时保存标志提交后重新取得答题表单并逐字段核验，同时确认作业仍为未交；`learning.course.homework.submit` 使用当前表单全部字段，经一次性确认后先调用校验接口再正式提交，只有服务器确认且刷新列表显示已交才报告成功；`learning.course.homework.redo` 经一次性确认后覆盖上一份作答并回读新答题表单；`learning.course.homework.attempts.list` 读取历次作答索引，`learning.course.homework.attempt.read` 按页面提供的 `selectTimes` 读取一份历史答案。三项作业读取动作都会复核列表状态与 `answer_id` 未变化；
 - `learning.course.materials.list` 读取资料根目录或指定的一级文件夹，不预览、下载或增加浏览次数；
 - `learning.course.ai_tools.list`、`learning.course.wrong_questions.summary` 和 `learning.course.records.read` 分别读取可用 AI 工具、错题概况和十二类学习指标，并剔除身份与页面启动令牌。
 - `learning.course.knowledge_graph.list`、`learning.course.knowledge_graph.node.read`、`learning.course.knowledge_graph.models.list` 和 `learning.course.knowledge_graph.model.read` 读取学生可见图谱、单个节点、图谱模型目录与指定模型层级，不返回 `enc`、`stuenc` 或导出令牌。
 
-上述动作中 16 个已通过保存的登录会话直接执行。当前账号实测发现真实课堂活动、66 个章节、讨论话题、作业和资料；课程图谱包含 276 个节点、431 条关系和 7 个图谱模型。作业详情读取已分别验证 `/view` 与 `/preview` 两种页面，均解析出题目且读取前后保持“未交”和原 `answer_id`；历次作答索引接口分别验证了“可用但无记录”和 `answer_id=0` 时“无有效答题实例”两种响应，状态均未变化。指定历史作答读取已按当前页面的 `selectTimes` 协议实现；显式进入答题已按 `/dowork` 重定向和表单结构实现；重做已按详情页公开的 `/work/phone/redo` 协议实现并加入确认门。当前账号没有非空历史记录、活动期可作答或可重做样本，因此这三个精确动作尚未标记真实条目验证。考试与自测当前为空，因此空列表行为已经实测，真实考试/自测条目的解析仍缺少当前账号样本。
+上述动作中 17 个已通过保存的登录会话直接执行。当前账号实测发现真实课堂活动、66 个章节、354 个讨论话题、作业和资料；一个真实讨论由平台报告 500 条回复，分页到末页后返回并去重得到 534 条当前可见一级回复，共 27 页。讨论写动作所需端点、字段、`urlToken` 和权限位已经与本次登录后的官方页面脚本核对，但未实际发布、修改或删除内容，因此六个写动作不标记实测。课程图谱包含 276 个节点、431 条关系和 7 个图谱模型。作业详情读取已分别验证 `/view` 与 `/preview` 两种页面，均解析出题目且读取前后保持“未交”和原 `answer_id`；历次作答索引接口分别验证了“可用但无记录”和 `answer_id=0` 时“无有效答题实例”两种响应，状态均未变化。指定历史作答读取已按当前页面的 `selectTimes` 协议实现；显式进入答题已按 `/dowork` 重定向和表单结构实现；重做已按详情页公开的 `/work/phone/redo` 协议实现并加入确认门。答案暂存与提交根据当前表单动作、字段结构、官方端点行为和多个现行兼容实现交叉建立协议，并有本地响应夹具验证，但当前两个学生作业均已过作答期，未对真实作业保存或提交。当前账号没有非空历史记录、活动期可作答或可重做样本，因此进入答题、答案暂存、提交、重做与指定历史记录尚未标记真实条目验证。考试与自测当前为空，因此空列表行为已经实测，真实考试/自测条目的解析仍缺少当前账号样本。
 
 “直播课/见面课”跳转到 `xueyinonline.chaoxing.com`，需要单独完成 Passport SSO。`session.login` 会在同一临时 HTTP 会话中预热平台返回的 SSO 地址，并分别验证个人空间和指定跨应用目标；CLI、MCP 和自然语言计划既可传入目标地址，也可只指定学生课程与“直播课/见面课”，由运行时在内存中解析签名地址。响应会剔除签名查询参数。当前账号已通过 Windows 原生遮罩弹窗刷新凭据并完成真实 HTTP 登录验证：个人空间认证成功，且“英语文体与写作”的学银在线直播课目标返回 200、到达原目标主机并未落回登录页；随后保存的新 Cookie 又直接读取了两门课程的直播课页面。当前两页均没有直播课条目，因此通用入口读取已实测，条目级独立语义动作仍待实现与验证。
 

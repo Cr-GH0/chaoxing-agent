@@ -1,6 +1,6 @@
 {
   "name": "chaoxing-teacher",
-  "version": "0.12.2",
+  "version": "0.13.0",
   "description": "Use natural-language teacher requests to operate Chaoxing through the bundled HTTP runtime.",
   "author": {
     "name": "Chaoxing Teacher Skill"

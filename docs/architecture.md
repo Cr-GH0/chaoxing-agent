@@ -59,6 +59,10 @@ Windows CLI 的 `--windows-dialog` 使用系统 `CredUIPromptForWindowsCredentia
 
 `learning.course.homework.answer.enter` 是独立的 `write` 动作，只有调用方明确选择它时才允许跟随 `/dowork`。成功结果必须到达该路径、检测到答题表单并核对 `work_id`；结果只返回表单、控件和题目结构，不返回隐藏值或签名参数，也不会自动保存或提交。进入表单可能创建或恢复答题实例，因此不能由只读详情动作隐式触发。
 
+`learning.course.homework.answers.save` 从刚取得的答题页中定位唯一的 `POST /work/addStudentWorkNewWeb` 表单，序列化当前所有成功控件，只替换命令指定题目的答案字段，并设置临时保存标志。单选、多选、填空、判断、简答、论述和编程题按表单中的 `answertype{question_id}` 绑定处理；未指定题目及其他隐藏字段原样保留。服务器确认后重新进入同一作业，逐项比对指定字段，并确认列表状态仍不是已交。公开结果只返回题目 ID 和字段名，不返回答案正文、隐藏值或查询令牌。
+
+`learning.course.homework.submit` 使用新取得的完整答题表单，先调用 `/work/validate`，再移除临时保存标志并正式提交。该动作按 `publish` 风险要求动作与参数绑定的一次性确认；HTTP 成功或 JSON 确认都不是最终证据，只有刷新作业列表后同一 `work_id` 显示 `submitted` 或 `completed` 才报告成功。当前账号没有活动期作业，因此这两个写动作已有协议夹具测试但尚未对真实作业执行。
+
 `learning.course.homework.redo` 使用详情页实际公开的 `/mooc-ans/work/phone/redo` 和 `workAnswerId` 参数。它会覆盖上一份作答记录，因此按 `delete` 风险执行一次性确认；只有服务器确认重做且随后进入同一 `work_id` 的答题表单才报告成功。服务器确认后若表单回读失败，动作会明确报错而不会声称完成。
 
 作业详情页公开的 `/mooc-ans/mooc2/work/answer-list` 用于读取历次作答索引；历史记录通过页面提供的 `selectTimes` 参数读取。两类动作都只在内存中使用 `enc`，公开结果不返回历史页签名地址，并在完成后复核作业状态与 `answer_id`。当前账号已实测空记录列表；指定历史作答读取有页面协议与自动测试，但因当前账号没有非空记录，未标记真实条目验证。

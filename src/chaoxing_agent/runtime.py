@@ -1366,6 +1366,74 @@ class ActionRuntime:
                 search=str(parameters.get("search") or ""),
                 class_only=self._boolean(parameters.get("class_only", False), "class_only"),
             )
+        if action == "learning.course.discussions.topic.read":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            try:
+                order = int(parameters.get("order", 2))
+            except (TypeError, ValueError) as exc:
+                raise ActionRuntimeError("order must be 1 or 2") from exc
+            return api.read_learning_discussion_topic(
+                course,
+                self._required(parameters, "topic"),
+                class_only=self._boolean(parameters.get("class_only", False), "class_only"),
+                order=order,
+                reply_search=str(parameters.get("reply_search") or ""),
+            )
+        if action == "learning.course.discussions.topic.create":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.create_learning_discussion_topic(
+                course,
+                str(parameters.get("title") or ""),
+                str(parameters.get("content") or ""),
+                anonymous=self._boolean(parameters.get("anonymous", False), "anonymous"),
+            )
+        if action == "learning.course.discussions.topic.update":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.update_learning_discussion_topic(
+                course,
+                self._required(parameters, "topic"),
+                title=(str(parameters["title"]) if parameters.get("title") is not None else None),
+                content=(
+                    str(parameters["content"]) if parameters.get("content") is not None else None
+                ),
+            )
+        if action == "learning.course.discussions.topic.delete":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.delete_learning_discussion_topic(
+                course,
+                self._required(parameters, "topic"),
+            )
+        if action == "learning.course.discussions.reply.create":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.create_learning_discussion_reply(
+                course,
+                self._required(parameters, "topic"),
+                self._required(parameters, "content"),
+                reply_to=str(parameters.get("reply_to") or ""),
+                anonymous=self._boolean(parameters.get("anonymous", False), "anonymous"),
+            )
+        if action == "learning.course.discussions.reply.update":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.update_learning_discussion_reply(
+                course,
+                self._required(parameters, "topic"),
+                self._required(parameters, "reply"),
+                self._required(parameters, "content"),
+            )
+        if action == "learning.course.discussions.reply.delete":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.delete_learning_discussion_reply(
+                course,
+                self._required(parameters, "topic"),
+                self._required(parameters, "reply"),
+            )
         if action == "learning.course.homeworks.list":
             api = self._api()
             course = api.get_learning_course(self._required(parameters, "course"))
@@ -1385,6 +1453,26 @@ class ActionRuntime:
             api = self._api()
             course = api.get_learning_course(self._required(parameters, "course"))
             return api.enter_learning_homework_answer(
+                course,
+                self._required(parameters, "homework"),
+            )
+        if action == "learning.course.homework.answers.save":
+            updates = parameters.get("updates")
+            if not isinstance(updates, list) or not updates:
+                raise ActionRuntimeError("updates must be a non-empty list of answer objects")
+            if any(not isinstance(update, dict) for update in updates):
+                raise ActionRuntimeError("each updates item must be an answer object")
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.save_learning_homework_answers(
+                course,
+                self._required(parameters, "homework"),
+                updates,
+            )
+        if action == "learning.course.homework.submit":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.submit_learning_homework(
                 course,
                 self._required(parameters, "homework"),
             )
@@ -4927,6 +5015,11 @@ class ActionRuntime:
 
     @staticmethod
     def _confirmation_summary(action: str, parameters: dict[str, Any]) -> str:
+        if action == "learning.course.homework.submit":
+            return (
+                f"提交我学课程 {parameters.get('course')} 的作业 {parameters.get('homework')}；"
+                "当前暂存答案将正式进入已交状态"
+            )
         if action == "learning.course.homework.redo":
             return (
                 f"重做我学课程 {parameters.get('course')} 的作业 {parameters.get('homework')}；"

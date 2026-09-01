@@ -2280,6 +2280,77 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         aliases=("我学课程讨论", "学生讨论"),
     ),
     ActionSpec(
+        "learning.course.discussions.topic.read",
+        "读取学生课程讨论与回复",
+        "learning_discussions",
+        ActionRisk.READ,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        live_verified=True,
+        description="读取指定学生课程讨论的完整正文，并分页读取当前可见的全部回复。",
+        aliases=("查看我学课程讨论详情", "读取学生讨论回复"),
+    ),
+    ActionSpec(
+        "learning.course.discussions.topic.create",
+        "发布学生课程讨论",
+        "learning_discussions",
+        ActionRisk.PUBLISH,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description="在当前学生班级发布纯文本讨论；执行前必须使用动作绑定的一次性确认。",
+        aliases=("在我学课程发起讨论", "发布学生讨论"),
+    ),
+    ActionSpec(
+        "learning.course.discussions.topic.update",
+        "修改学生课程讨论",
+        "learning_discussions",
+        ActionRisk.PUBLISH,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description="仅修改当前账号获准编辑的讨论，并在提交后重新读取标题和正文核验。",
+        aliases=("修改我发的学生讨论", "编辑我学课程话题"),
+    ),
+    ActionSpec(
+        "learning.course.discussions.topic.delete",
+        "删除学生课程讨论",
+        "learning_discussions",
+        ActionRisk.DELETE,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description="仅删除当前账号获准删除的讨论；执行前确认并在刷新列表中核验消失。",
+        aliases=("删除我发的学生讨论",),
+    ),
+    ActionSpec(
+        "learning.course.discussions.reply.create",
+        "回复学生课程讨论",
+        "learning_discussions",
+        ActionRisk.PUBLISH,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description="回复学生课程讨论或其中一条回复；执行前必须使用动作绑定的一次性确认。",
+        aliases=("回复我学课程讨论", "发布学生讨论回复"),
+    ),
+    ActionSpec(
+        "learning.course.discussions.reply.update",
+        "修改学生课程讨论回复",
+        "learning_discussions",
+        ActionRisk.PUBLISH,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description="只修改当前账号自己的可编辑回复，并在提交后重新读取核验。",
+        aliases=("修改我发的学生讨论回复",),
+    ),
+    ActionSpec(
+        "learning.course.discussions.reply.delete",
+        "删除学生课程讨论回复",
+        "learning_discussions",
+        ActionRisk.DELETE,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description="只删除当前账号自己的可删除回复；执行前确认并在回读中核验消失。",
+        aliases=("删除我发的学生讨论回复",),
+    ),
+    ActionSpec(
         "learning.course.homeworks.list",
         "列出学生课程作业",
         "learning_homework",
@@ -2316,6 +2387,34 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
             "提交答案。当前账号没有活动期可作答样本，尚未完成真实表单验证。"
         ),
         aliases=("开始作答学生作业", "继续我的作业", "进入作业答题页"),
+    ),
+    ActionSpec(
+        "learning.course.homework.answers.save",
+        "暂存学生作业答案",
+        "learning_homework",
+        ActionRisk.WRITE,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description=(
+            "按题号、题目 ID 或唯一题干只更新用户指定的答案，保留当前表单中其余字段；"
+            "服务器确认后重新获取答题表单，核验指定字段并确认作业仍为未交。当前账号"
+            "没有活动期可作答样本，尚未完成真实暂存验证。"
+        ),
+        aliases=("暂存我的作业答案", "保存学生作业草稿", "修改并暂存作业答案"),
+    ),
+    ActionSpec(
+        "learning.course.homework.submit",
+        "提交学生课程作业",
+        "learning_homework",
+        ActionRisk.PUBLISH,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description=(
+            "使用当前答题表单的全部字段校验并提交作业；执行前必须使用动作绑定的一次性"
+            "确认，且只有服务器确认并刷新列表显示已交后才报告成功。当前账号没有活动期"
+            "可提交样本，尚未完成真实提交验证。"
+        ),
+        aliases=("提交我的作业", "交学生课程作业", "作业交卷"),
     ),
     ActionSpec(
         "learning.course.homework.redo",

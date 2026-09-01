@@ -1,3 +1,5 @@
+import json
+
 import pytest
 
 from chaoxing_agent.cli import _parse_permission_changes, _run_action, build_parser
@@ -39,6 +41,41 @@ def test_learning_cli_parses_semantic_read_commands() -> None:
     discussions = build_parser().parse_args(
         ["learning-discussions", "英语文体与写作", "--class-only", "--search", "环境"]
     )
+    discussion = build_parser().parse_args(
+        [
+            "learning-discussion-read",
+            "英语文体与写作",
+            "环境问题",
+            "--order",
+            "1",
+            "--reply-search",
+            "pollution",
+        ]
+    )
+    discussion_create = build_parser().parse_args(
+        ["learning-discussion-create", "英语文体与写作", "标题", "正文"]
+    )
+    discussion_update = build_parser().parse_args(
+        ["learning-discussion-update", "英语文体与写作", "标题", "--content", "新正文"]
+    )
+    discussion_delete = build_parser().parse_args(
+        ["learning-discussion-delete", "英语文体与写作", "标题"]
+    )
+    reply_create = build_parser().parse_args(
+        ["learning-discussion-reply-create", "英语文体与写作", "标题", "回复"]
+    )
+    reply_update = build_parser().parse_args(
+        [
+            "learning-discussion-reply-update",
+            "英语文体与写作",
+            "标题",
+            "原回复",
+            "新回复",
+        ]
+    )
+    reply_delete = build_parser().parse_args(
+        ["learning-discussion-reply-delete", "英语文体与写作", "标题", "回复"]
+    )
     homeworks = build_parser().parse_args(
         ["learning-homeworks", "英语文体与写作", "--status", "unsubmitted"]
     )
@@ -47,6 +84,24 @@ def test_learning_cli_parses_semantic_read_commands() -> None:
     )
     homework_answer = build_parser().parse_args(
         ["learning-homework-answer-enter", "新教师入职培训", "BOPPPPS设计小讨论"]
+    )
+    homework_save = build_parser().parse_args(
+        [
+            "learning-homework-answer-save",
+            "新教师入职培训",
+            "BOPPPPS设计小讨论",
+            "--updates-json",
+            '[{"question":"1","answer":"真实问题"}]',
+        ]
+    )
+    homework_submit = build_parser().parse_args(
+        [
+            "learning-homework-submit",
+            "新教师入职培训",
+            "BOPPPPS设计小讨论",
+            "--confirmation-token",
+            "submit-token",
+        ]
     )
     homework_redo = build_parser().parse_args(
         [
@@ -88,9 +143,20 @@ def test_learning_cli_parses_semantic_read_commands() -> None:
     assert activities.status == "ended" and activities.search == "讨论"
     assert chapters.search == "1.1"
     assert discussions.class_only is True and discussions.search == "环境"
+    assert discussion.topic == "环境问题"
+    assert discussion.order == 1 and discussion.reply_search == "pollution"
+    assert discussion_create.title == "标题" and discussion_create.content == "正文"
+    assert discussion_update.content == "新正文"
+    assert discussion_delete.topic == "标题"
+    assert reply_create.content == "回复"
+    assert reply_update.reply == "原回复" and reply_update.content == "新回复"
+    assert reply_delete.reply == "回复"
     assert homeworks.status == "unsubmitted"
     assert homework.homework == "BOPPPS设计小讨论"
     assert homework_answer.command == "learning-homework-answer-enter"
+    assert homework_save.command == "learning-homework-answer-save"
+    assert json.loads(homework_save.updates_json)[0]["question"] == "1"
+    assert homework_submit.confirmation_token == "submit-token"
     assert homework_redo.confirmation_token == "redo-token"
     assert homework_attempts.command == "learning-homework-attempts"
     assert homework_attempt.attempt == "1"
@@ -104,6 +170,55 @@ def test_learning_cli_parses_semantic_read_commands() -> None:
     assert graph_node.node == "Punctuation"
     assert graph_models.search == "知识"
     assert graph_model.model == "知识图谱"
+
+
+@pytest.mark.asyncio
+async def test_learning_homework_mutation_cli_dispatches_updates_and_confirmation() -> None:
+    class Runtime:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def execute(self, action, parameters, confirmation_token=None):
+            self.calls.append((action, parameters, confirmation_token))
+            return {"status": "ok"}
+
+    runtime = Runtime()
+    save = build_parser().parse_args(
+        [
+            "learning-homework-answer-save",
+            "英语文体与写作",
+            "期中调查",
+            "--updates-json",
+            '[{"question":"2","answer":"正文"}]',
+        ]
+    )
+    submit = build_parser().parse_args(
+        [
+            "learning-homework-submit",
+            "英语文体与写作",
+            "期中调查",
+            "--confirmation-token",
+            "submit-token",
+        ]
+    )
+
+    await _run_action(save, runtime)
+    await _run_action(submit, runtime)
+
+    assert runtime.calls[0] == (
+        "learning.course.homework.answers.save",
+        {
+            "course": "英语文体与写作",
+            "homework": "期中调查",
+            "updates": [{"question": "2", "answer": "正文"}],
+        },
+        None,
+    )
+    assert runtime.calls[1] == (
+        "learning.course.homework.submit",
+        {"course": "英语文体与写作", "homework": "期中调查"},
+        "submit-token",
+    )
 
 
 def test_job_ability_cli_parses_search_catalog_and_industry_commands() -> None:
