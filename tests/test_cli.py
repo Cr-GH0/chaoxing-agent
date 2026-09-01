@@ -42,6 +42,9 @@ def test_learning_cli_parses_semantic_read_commands() -> None:
     homeworks = build_parser().parse_args(
         ["learning-homeworks", "英语文体与写作", "--status", "unsubmitted"]
     )
+    homework = build_parser().parse_args(
+        ["learning-homework-read", "新教师入职培训", "BOPPPS设计小讨论"]
+    )
     exams = build_parser().parse_args(["learning-exams", "英语文体与写作"])
     self_tests = build_parser().parse_args(["learning-self-tests", "英语文体与写作"])
     materials = build_parser().parse_args(
@@ -63,6 +66,7 @@ def test_learning_cli_parses_semantic_read_commands() -> None:
     assert chapters.search == "1.1"
     assert discussions.class_only is True and discussions.search == "环境"
     assert homeworks.status == "unsubmitted"
+    assert homework.homework == "BOPPPS设计小讨论"
     assert exams.command == "learning-exams"
     assert self_tests.command == "learning-self-tests"
     assert materials.folder == "Week 1"

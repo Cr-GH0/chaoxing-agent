@@ -6941,9 +6941,11 @@ def _learning_entry_status_key(status: str) -> str:
     return "unknown"
 
 
-def parse_learning_task_entries(html: str) -> list[dict[str, Any]]:
-    """Parse student homework, exam, or self-test list entries without opening them."""
-
+def _parse_learning_task_entries(
+    html: str,
+    *,
+    redact_urls: bool,
+) -> list[dict[str, Any]]:
     entries: list[dict[str, Any]] = []
     for match in re.finditer(
         r"<li\b(?P<attrs>[^>]*)>(?P<body>.*?)</li>",
@@ -6995,10 +6997,199 @@ def parse_learning_task_entries(html: str) -> list[dict[str, Any]]:
                 "test_paper_id": query.get("testpaperid", ""),
                 "test_user_relation_id": query.get("testuserrelationid", ""),
                 "task_id": query.get("taskid", ""),
-                "entry_url": redact_url_query_values(raw_url, LEARNING_SECRET_QUERY_NAMES),
+                "entry_url": (
+                    redact_url_query_values(raw_url, LEARNING_SECRET_QUERY_NAMES)
+                    if redact_urls
+                    else raw_url
+                ),
             }
         )
     return entries
+
+
+def parse_learning_task_entries(html: str) -> list[dict[str, Any]]:
+    """Parse student homework, exam, or self-test list entries without opening them."""
+
+    return _parse_learning_task_entries(html, redact_urls=True)
+
+
+def parse_learning_homework_detail(html: str) -> dict[str, Any]:
+    """Parse the learner homework preview/view page without exposing session tokens."""
+
+    source = str(html or "")
+
+    def first_element(class_name: str, fragment: str = source) -> str:
+        opening = re.search(
+            rf"<(?P<tag>[A-Za-z0-9]+)\b[^>]*class=['\"][^'\"]*\b"
+            rf"{re.escape(class_name)}\b[^'\"]*['\"][^>]*>",
+            fragment,
+            flags=re.I | re.S,
+        )
+        return _html_element_fragment(fragment, opening) if opening else ""
+
+    title = html_text(first_element("mark_title"))
+    info_text = html_text(first_element("infoHead"))
+    details_text = html_text(first_element("detailsHead"))
+    availability_message = html_text(first_element("classtips"))
+    declared_count_match = re.search(r"题量\s*[:：]\s*(\d+)", info_text)
+    declared_score_match = re.search(r"满分\s*[:：]\s*(-?\d+(?:\.\d+)?)", info_text)
+    time_match = re.search(r"作答时间\s*[:：]\s*(.+?)\s+至\s+(.+)$", info_text)
+    hidden = parse_page_values(
+        source,
+        ("courseId", "classId", "workId", "answerId"),
+    )
+
+    actionable_onclick: list[str] = []
+    actionable_paths: list[str] = []
+    for opening in re.finditer(r"<(?:a|button|input)\b[^>]*>", source, flags=re.I | re.S):
+        attrs = html_attrs(opening.group(0))
+        onclick = str(attrs.get("onclick") or "")
+        if onclick:
+            actionable_onclick.append(onclick.casefold())
+        href = str(attrs.get("href") or attrs.get("data") or "").strip()
+        if href:
+            actionable_paths.append(urlparse(href).path.casefold())
+
+    questions: list[dict[str, Any]] = []
+    groups: list[dict[str, Any]] = []
+    group_openings = list(
+        re.finditer(
+            r"<div\b[^>]*class=['\"][^'\"]*\bmark_item\b[^'\"]*['\"][^>]*>",
+            source,
+            flags=re.I | re.S,
+        )
+    )
+    group_fragments = [_html_element_fragment(source, opening) for opening in group_openings] or [
+        source
+    ]
+    for group_index, group_fragment in enumerate(group_fragments, 1):
+        group_heading = html_text(first_element("type_tit", group_fragment))
+        group_count_match = re.search(r"共\s*(\d+)\s*题", group_heading)
+        group_score_match = re.search(r"(-?\d+(?:\.\d+)?)\s*分", group_heading)
+        group_label = re.sub(r"^\s*[一二三四五六七八九十\d]+\s*[.、]\s*", "", group_heading)
+        group_label = re.sub(r"[（(].*$", "", group_label).strip()
+        group_question_indexes: list[int] = []
+        question_openings = list(
+            re.finditer(
+                r"<div\b[^>]*class=['\"][^'\"]*\bquestionLi\b[^'\"]*['\"][^>]*>",
+                group_fragment,
+                flags=re.I | re.S,
+            )
+        )
+        for question_opening in question_openings:
+            question_fragment = _html_element_fragment(group_fragment, question_opening)
+            question_attrs = html_attrs(question_opening.group(0))
+            question_id = str(question_attrs.get("data") or "").strip()
+            if not question_id:
+                question_id = re.sub(
+                    r"^question", "", str(question_attrs.get("id") or ""), flags=re.I
+                )
+
+            heading_element = first_element("mark_name", question_fragment)
+            heading_html = _element_inner_html(heading_element)
+            type_element = first_element("colorShallow", heading_element)
+            raw_type = html_text(type_element).strip("()（） ")
+            score_match = re.search(r"(-?\d+(?:\.\d+)?)\s*分", raw_type)
+            question_type_label = re.split(r"[,，]", raw_type, maxsplit=1)[0].strip()
+
+            stem_element = first_element("qtContent", question_fragment)
+            if stem_element:
+                stem_html = _element_inner_html(stem_element).strip()
+            else:
+                stem_html = re.sub(r"^\s*\d+\s*[.、]\s*", "", heading_html, count=1)
+                stem_html = re.sub(
+                    r"<span\b[^>]*class=['\"][^'\"]*\bcolorShallow\b[^'\"]*['\"][^>]*>"
+                    r"[\s\S]*?</span>",
+                    "",
+                    stem_html,
+                    count=1,
+                    flags=re.I,
+                ).strip()
+
+            options: list[dict[str, str]] = []
+            options_element = first_element("mark_letter", question_fragment)
+            if options_element:
+                for option_fragment in re.findall(
+                    r"<li\b[^>]*>([\s\S]*?)</li>",
+                    options_element,
+                    flags=re.I,
+                ):
+                    option_text = html_text(option_fragment)
+                    label_match = re.match(r"([A-Za-z])\s*[.、]\s*(.*)", option_text)
+                    options.append(
+                        {
+                            "label": label_match.group(1) if label_match else "",
+                            "text": label_match.group(2) if label_match else option_text,
+                        }
+                    )
+
+            answer_element = first_element("stuAnswerContent", question_fragment)
+            answer_html = _element_inner_html(answer_element).strip() if answer_element else ""
+            question_index_match = re.match(r"\s*(\d+)\s*[.、]", html_text(heading_element))
+            question_index = (
+                int(question_index_match.group(1)) if question_index_match else len(questions) + 1
+            )
+            question = {
+                "index": question_index,
+                "question_id": question_id,
+                "question_type": _exam_question_type(question_type_label),
+                "question_type_label": question_type_label,
+                "score": _numeric_or_text(score_match.group(1)) if score_match else None,
+                "stem": html_text(stem_html),
+                "stem_images": [
+                    redact_url_query_values(url, LEARNING_SECRET_QUERY_NAMES)
+                    for url in parse_content_images(stem_html)
+                ],
+                "stem_attachments": parse_attachment_iframes(stem_html),
+                "options": options,
+                "student_answer": html_text(answer_html),
+                "student_answer_images": [
+                    redact_url_query_values(url, LEARNING_SECRET_QUERY_NAMES)
+                    for url in parse_content_images(answer_html)
+                ],
+                "student_answer_attachments": parse_attachment_iframes(answer_html),
+            }
+            questions.append(question)
+            group_question_indexes.append(question_index)
+        if group_heading or group_question_indexes:
+            groups.append(
+                {
+                    "index": group_index,
+                    "label": group_label,
+                    "declared_question_count": (
+                        int(group_count_match.group(1)) if group_count_match else None
+                    ),
+                    "declared_score": (
+                        _numeric_or_text(group_score_match.group(1)) if group_score_match else None
+                    ),
+                    "question_indexes": group_question_indexes,
+                }
+            )
+
+    return {
+        "title": title,
+        "work_id": hidden["workId"],
+        "answer_id": hidden["answerId"],
+        "course_id": hidden["courseId"],
+        "clazz_id": hidden["classId"],
+        "declared_question_count": (
+            int(declared_count_match.group(1)) if declared_count_match else None
+        ),
+        "declared_full_score": (
+            _numeric_or_text(declared_score_match.group(1)) if declared_score_match else None
+        ),
+        "answer_start_time": time_match.group(1).strip() if time_match else "",
+        "answer_end_time": time_match.group(2).strip() if time_match else "",
+        "availability_message": availability_message,
+        "details": details_text,
+        "question_count": len(questions),
+        "group_count": len(groups),
+        "groups": groups,
+        "questions": questions,
+        "can_answer": any("/dowork" in path for path in actionable_paths),
+        "can_modify_answer": any("modifyanswer(" in value for value in actionable_onclick),
+        "can_redo": any("redowork(" in value for value in actionable_onclick),
+    }
 
 
 def parse_learning_materials(html: str) -> list[dict[str, Any]]:
@@ -20363,6 +20554,79 @@ class ChaoxingAPI:
             search=search,
             status=status,
         )
+
+    def read_learning_homework(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+    ) -> dict[str, Any]:
+        module = self._learning_module_response(course, "作业")
+        entries = _parse_learning_task_entries(str(module["html"]), redact_urls=False)
+        homework = resolve_homework(entries, homework_query)
+        entry_url = validated_chaoxing_url(
+            urljoin(str(module["response"].url), str(homework["entry_url"])),
+            "learner homework URL",
+        )
+        try:
+            response = module["session"].get(
+                entry_url,
+                timeout=max(self.timeout, 60),
+                allow_redirects=True,
+                headers={"Referer": str(module["response"].url)},
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise ChaoxingAPIError(
+                f"learner homework detail request failed: {type(exc).__name__}"
+            ) from exc
+        validated_chaoxing_url(response.url, "learner homework final URL")
+        html = self._decode(response)
+        if "passport2.chaoxing.com/login" in response.url.casefold() or (
+            "passport2.chaoxing.com/login" in html.casefold()
+        ):
+            raise ChaoxingAPIError("learner homework detail was redirected to login")
+
+        detail = parse_learning_homework_detail(html)
+        if detail["work_id"] and detail["work_id"] != homework["work_id"]:
+            raise ChaoxingAPIError("learner homework detail did not match the selected work")
+        detail["work_id"] = detail["work_id"] or homework["work_id"]
+        detail["answer_id"] = detail["answer_id"] or homework["answer_id"]
+        detail["course_id"] = detail["course_id"] or course["course_id"]
+        detail["clazz_id"] = detail["clazz_id"] or course["clazz_id"]
+        detail["title"] = detail["title"] or homework["title"]
+
+        refreshed = self.list_learning_homeworks(course)
+        after = resolve_homework(refreshed["homeworks"], homework["work_id"])
+        state_fields = ("status", "status_key", "answer_id")
+        if any(str(after.get(key) or "") != str(homework.get(key) or "") for key in state_fields):
+            raise ChaoxingAPIError(
+                "learner homework state changed while reading its detail; "
+                "the action stopped before any save or submit request"
+            )
+
+        final = urlparse(response.url)
+        public_homework = {
+            **homework,
+            "entry_url": redact_url_query_values(
+                str(homework["entry_url"]),
+                LEARNING_SECRET_QUERY_NAMES,
+            ),
+        }
+        return {
+            **self._learning_course_result(course),
+            "homework": public_homework,
+            "page": {
+                "host": final.netloc,
+                "path": final.path,
+                "http_status": response.status_code,
+            },
+            **detail,
+            "state_unchanged": True,
+            "verification": (
+                "learner homework detail parsed through HTTP; list status and answer ID "
+                "were unchanged after reading; no save or submit request was sent"
+            ),
+        }
 
     def list_learning_exams(
         self,

@@ -48,6 +48,7 @@ from chaoxing_agent.api import (
     parse_learning_ai_tools,
     parse_learning_chapters,
     parse_learning_courses,
+    parse_learning_homework_detail,
     parse_learning_materials,
     parse_learning_progress_payload,
     parse_learning_task_entries,
@@ -772,6 +773,140 @@ def test_parse_learner_semantic_pages_without_exposing_session_tokens() -> None:
     assert tasks[0]["work_id"] == "88"
     assert tasks[0]["status_key"] == "unsubmitted"
     assert "secret" not in str(tasks)
+
+    homework_detail = parse_learning_homework_detail(
+        """
+        <input type="hidden" id="courseId" value="10">
+        <input type="hidden" id="classId" value="20">
+        <input type="hidden" id="workId" value="88">
+        <input type="hidden" id="answerId" value="99">
+        <div class="detailsHead">
+          <div class="classtips">作业当前可修改</div>
+          <h2 class="mark_title">BOPPPS 设计</h2>
+          <div class="infoHead">题量: 1 满分: 100 作答时间: 01-09 10:06 至 01-17 10:06</div>
+        </div>
+        <div class="mark_item">
+          <h2 class="type_tit">一. 简答题（共1题，100分）</h2>
+          <div class="questionLi" id="question405540058" data="405540058">
+            <h3 class="mark_name">1. <span class="colorShallow">(简答题, 100分)</span>
+              <span class="qtContent"><p>请设计一个课堂导入。</p>
+                <img src="/question.png?enc=secret&amp;token=image-token">
+              </span>
+            </h3>
+            <dd class="stuAnswerContent"><p>使用真实问题引入。</p></dd>
+          </div>
+        </div>
+        <a href="/mooc-ans/mooc2/work/dowork?enc=secret">继续作答</a>
+        """
+    )
+    assert homework_detail["title"] == "BOPPPS 设计"
+    assert homework_detail["declared_question_count"] == 1
+    assert homework_detail["declared_full_score"] == 100
+    assert homework_detail["answer_start_time"] == "01-09 10:06"
+    assert homework_detail["questions"][0]["question_type"] == "short_answer"
+    assert homework_detail["questions"][0]["stem"] == "请设计一个课堂导入。"
+    assert "redacted" in homework_detail["questions"][0]["stem_images"][0]
+    assert homework_detail["questions"][0]["student_answer"] == "使用真实问题引入。"
+    assert homework_detail["can_answer"] is True
+    assert "secret" not in str(homework_detail)
+    assert "image-token" not in str(homework_detail)
+
+
+def test_learning_homework_detail_read_keeps_list_state_unchanged(monkeypatch) -> None:
+    list_html = """
+    <ul><li onclick="goTask(this);"
+      data="https://mooc1.chaoxing.com/mooc-ans/mooc2/work/task?workId=88&amp;answerId=99&amp;enc=secret"
+      aria-label="BOPPPS 设计 ; 未交">
+      <p class="overHidden2 fl">BOPPPS 设计</p><p class="status fl">未交</p>
+    </li></ul>
+    """
+    detail_html = """
+    <input type="hidden" id="courseId" value="10">
+    <input type="hidden" id="classId" value="20">
+    <input type="hidden" id="workId" value="88">
+    <input type="hidden" id="answerId" value="99">
+    <h2 class="mark_title">BOPPPS 设计</h2>
+    <div class="infoHead">题量: 1 满分: 100</div>
+    <div class="mark_item"><h2 class="type_tit">一. 简答题（共1题，100分）</h2>
+      <div class="questionLi" id="question1" data="1">
+        <h3 class="mark_name">1. <span class="colorShallow">(简答题)</span>
+          <span class="qtContent">说明课堂导入。</span>
+        </h3>
+        <dd class="stuAnswerContent">已有草稿</dd>
+      </div>
+    </div>
+    """
+
+    class Response:
+        url = "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/view?enc=secret"
+        status_code = 200
+        headers = {"Content-Type": "text/html;charset=UTF-8"}
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+        content = detail_html.encode("utf-8")
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict]] = []
+
+        def get(self, url: str, **kwargs) -> Response:
+            self.calls.append((url, kwargs))
+            return Response()
+
+    session = Session()
+    page = type(
+        "Page",
+        (),
+        {"url": "https://mooc2-ans.chaoxing.com/mooc2-ans/mycourse/stu?courseid=10"},
+    )()
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(
+        api,
+        "_learning_module_response",
+        lambda _course, _module: {
+            "session": session,
+            "response": page,
+            "html": list_html,
+        },
+    )
+    course = {"course_id": "10", "course_name": "Writing", "clazz_id": "20"}
+
+    result = api.read_learning_homework(course, "BOPPPS 设计")
+
+    assert result["work_id"] == "88"
+    assert result["answer_id"] == "99"
+    assert result["questions"][0]["student_answer"] == "已有草稿"
+    assert result["state_unchanged"] is True
+    assert result["page"] == {
+        "host": "mooc1.chaoxing.com",
+        "path": "/mooc-ans/mooc2/work/view",
+        "http_status": 200,
+    }
+    assert session.calls[0][1]["headers"]["Referer"] == page.url
+    assert "secret" not in str(result)
+
+    monkeypatch.setattr(
+        api,
+        "list_learning_homeworks",
+        lambda _course: {
+            "homeworks": [
+                {
+                    "index": 1,
+                    "title": "BOPPPS 设计",
+                    "status": "已交",
+                    "status_key": "submitted",
+                    "work_id": "88",
+                    "answer_id": "100",
+                }
+            ]
+        },
+    )
+    with pytest.raises(ChaoxingAPIError, match="state changed while reading"):
+        api.read_learning_homework(course, "BOPPPS 设计")
 
 
 def test_parse_learning_materials_wrong_questions_activities_and_records() -> None:

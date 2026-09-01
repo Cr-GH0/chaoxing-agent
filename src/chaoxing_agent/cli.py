@@ -1479,6 +1479,13 @@ def build_parser() -> argparse.ArgumentParser:
         learning_task_parser.add_argument("--search", default="")
         learning_task_parser.add_argument("--status", default="")
 
+    learning_homework_read = sub.add_parser(
+        "learning-homework-read",
+        help="read learner homework questions and current answer without saving or submitting",
+    )
+    learning_homework_read.add_argument("course")
+    learning_homework_read.add_argument("homework")
+
     learning_materials = sub.add_parser(
         "learning-materials", help="list learner-visible course materials or one folder"
     )
@@ -5777,6 +5784,11 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
         return await runtime.execute(
             action,
             {"course": args.course, "search": args.search, "status": args.status},
+        )
+    if args.command == "learning-homework-read":
+        return await runtime.execute(
+            "learning.course.homework.read",
+            {"course": args.course, "homework": args.homework},
         )
     if args.command == "learning-materials":
         return await runtime.execute(

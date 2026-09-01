@@ -2787,6 +2787,18 @@ async def chaoxing_list_learning_homeworks(
 
 
 @mcp.tool()
+async def chaoxing_read_learning_homework(
+    course: str,
+    homework: str,
+) -> dict[str, Any]:
+    """Read learner homework questions and current answer without saving or submitting."""
+    return await runtime.execute(
+        "learning.course.homework.read",
+        {"course": course, "homework": homework},
+    )
+
+
+@mcp.tool()
 async def chaoxing_list_learning_exams(
     course: str,
     search: str = "",

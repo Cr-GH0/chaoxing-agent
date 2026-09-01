@@ -5324,6 +5324,24 @@ def route_command(command: str) -> CommandPlan:
                 missing_fields=[] if quoted else ["course"],
                 message="请用书名号提供要查看 AI 工具的课程。" if not quoted else "",
             )
+        if "作业" in text and re.search(r"详情|题目|题干|我的答案|当前答案|答题记录", text):
+            parameters: dict[str, object] = {}
+            if quoted:
+                parameters["course"] = quoted[0]
+            homework = quoted[1] if len(quoted) > 1 else ""
+            if homework == "作业" and len(quoted) > 2:
+                homework = quoted[2]
+            if homework:
+                parameters["homework"] = homework
+            missing = [key for key in ("course", "homework") if key not in parameters]
+            return CommandPlan(
+                text,
+                "learning.course.homework.read",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程和作业。" if missing else "",
+            )
         semantic_read = bool(re.search(r"列出|列表|有哪些|查看|读取|搜索|查找|浏览", text))
         semantic_actions = (
             ("自测", "learning.course.self_tests.list"),

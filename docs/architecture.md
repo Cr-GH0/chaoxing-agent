@@ -55,6 +55,8 @@ Windows CLI 的 `--windows-dialog` 使用系统 `CredUIPromptForWindowsCredentia
 
 学生课程模块还可使用 `learning_course` 与 `learning_module` 进行语义选择。运行时通过当前保存会话读取学生课程入口，在内存中构造签名目标，然后立即交给同一次登录动作；公开结果只保留课程、班级、模块及脱敏后的目标验证信息。原始模块地址不写入本地状态，也不返回给调用方。课程语义选择与原始 `target_url` 互斥。
 
+`learning.course.homework.read` 先从当前学生作业列表解析指定作业及仅在内存中使用的签名入口，再读取预览或详情页。结果保留题目、图片、附件和当前答案，但剔除 `enc` 等会话参数；读取后重新解析作业列表，只有状态与 `answer_id` 均未变化才报告成功。该动作不调用保存、重做或提交接口。
+
 后续动作从 `CHAOXING_COOKIE_FILE` 创建独立 `requests.Session`。Cookie 文件应位于仓库外；`.gitignore` 还排除了常见 Cookie 文件名和本地运行目录。
 
 如果平台要求二次验证，登录动作返回明确错误与平台验证地址。项目不尝试绕过二次验证。

@@ -2291,6 +2291,20 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         aliases=("我的课程作业", "学生作业列表"),
     ),
     ActionSpec(
+        "learning.course.homework.read",
+        "读取学生课程作业详情",
+        "learning_homework",
+        ActionRisk.READ,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        live_verified=True,
+        description=(
+            "读取指定学生作业的时间、题型、题干、附件和当前答案；读取后复核列表状态与"
+            "答题 ID 未变化，不发送保存或提交请求。"
+        ),
+        aliases=("查看学生作业详情", "读取我的作业题目", "查看我的作业答案"),
+    ),
+    ActionSpec(
         "learning.course.exams.list",
         "列出学生课程考试",
         "learning_exams",

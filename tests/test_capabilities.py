@@ -378,7 +378,7 @@ def test_report_keeps_observed_separate_from_implemented() -> None:
     report = capability_report()
     counts = report["summary"]["by_state"]
     assert counts["observed"] == 43
-    assert counts["implemented"] == 549
+    assert counts["implemented"] == 550
 
 
 def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None:
@@ -432,6 +432,7 @@ def test_live_verification_distinguishes_supported_cloud_actions_from_limited_co
         "learning.course.chapters.list",
         "learning.course.discussions.list",
         "learning.course.homeworks.list",
+        "learning.course.homework.read",
         "learning.course.exams.list",
         "learning.course.self_tests.list",
         "learning.course.materials.list",

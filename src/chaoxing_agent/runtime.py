@@ -1327,6 +1327,13 @@ class ActionRuntime:
                 search=str(parameters.get("search") or ""),
                 status=str(parameters.get("status") or ""),
             )
+        if action == "learning.course.homework.read":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.read_learning_homework(
+                course,
+                self._required(parameters, "homework"),
+            )
         if action == "learning.course.exams.list":
             api = self._api()
             course = api.get_learning_course(self._required(parameters, "course"))

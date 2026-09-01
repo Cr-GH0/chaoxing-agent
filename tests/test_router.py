@@ -518,6 +518,7 @@ def test_route_learning_course_semantic_reads() -> None:
     chapters = route_command("列出我学课程《英语文体与写作》的章节")
     discussions = route_command("搜索我学课程《英语文体与写作》本班讨论《环境》")
     homeworks = route_command("查看我学课程《英语文体与写作》的未交作业列表")
+    homework = route_command("查看我学课程《新教师入职培训》的作业《BOPPPS设计小讨论》详情")
     exams = route_command("列出我学课程《英语文体与写作》的考试")
     self_tests = route_command("查看我学课程《英语文体与写作》的自测")
     materials = route_command("查看我学课程《英语文体与写作》的资料文件夹《Week 1》")
@@ -537,6 +538,11 @@ def test_route_learning_course_semantic_reads() -> None:
     assert discussions.parameters["class_only"] is True
     assert homeworks.action == "learning.course.homeworks.list"
     assert homeworks.parameters["status"] == "unsubmitted"
+    assert homework.action == "learning.course.homework.read"
+    assert homework.parameters == {
+        "course": "新教师入职培训",
+        "homework": "BOPPPS设计小讨论",
+    }
     assert exams.action == "learning.course.exams.list"
     assert self_tests.action == "learning.course.self_tests.list"
     assert materials.action == "learning.course.materials.list"

@@ -187,6 +187,14 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
             return {"course": course, "homeworks": [], **kwargs}
 
         @staticmethod
+        def read_learning_homework(course, homework):
+            return {
+                "course": course,
+                "homework": {"title": homework},
+                "questions": [{"stem": "说明课堂导入。"}],
+            }
+
+        @staticmethod
         def list_learning_exams(course, **kwargs):
             return {"course": course, "exams": [], **kwargs}
 
@@ -260,6 +268,10 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
     homeworks = await runtime.execute(
         "learning.course.homeworks.list", {"course": "英语文体与写作"}
     )
+    homework = await runtime.execute(
+        "learning.course.homework.read",
+        {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
+    )
     exams = await runtime.execute("learning.course.exams.list", {"course": "英语文体与写作"})
     self_tests = await runtime.execute(
         "learning.course.self_tests.list", {"course": "英语文体与写作"}
@@ -308,6 +320,7 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
     assert chapters["result"]["chapters"][0]["title"] == "第一章"
     assert discussions["result"]["class_only"] is True
     assert homeworks["result"]["homeworks"] == []
+    assert homework["result"]["homework"]["title"] == "BOPPPS 设计"
     assert exams["result"]["exams"] == []
     assert self_tests["result"]["self_tests"] == []
     assert materials["result"]["folder"] == "Week 1"
