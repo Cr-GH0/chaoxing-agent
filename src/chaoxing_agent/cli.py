@@ -1469,6 +1469,74 @@ def build_parser() -> argparse.ArgumentParser:
     learning_discussions.add_argument("--search", default="")
     learning_discussions.add_argument("--class-only", action="store_true")
 
+    learning_discussion_read = sub.add_parser(
+        "learning-discussion-read",
+        help="read one learner discussion topic and all visible replies",
+    )
+    learning_discussion_read.add_argument("course")
+    learning_discussion_read.add_argument("topic")
+    learning_discussion_read.add_argument("--class-only", action="store_true")
+    learning_discussion_read.add_argument("--order", choices=(1, 2), type=int, default=2)
+    learning_discussion_read.add_argument("--reply-search", default="")
+
+    learning_discussion_create = sub.add_parser(
+        "learning-discussion-create",
+        help="publish a learner discussion after an action-bound confirmation",
+    )
+    learning_discussion_create.add_argument("course")
+    learning_discussion_create.add_argument("title")
+    learning_discussion_create.add_argument("content")
+    learning_discussion_create.add_argument("--anonymous", action="store_true")
+    learning_discussion_create.add_argument("--confirmation-token")
+
+    learning_discussion_update = sub.add_parser(
+        "learning-discussion-update",
+        help="update an editable learner discussion after confirmation",
+    )
+    learning_discussion_update.add_argument("course")
+    learning_discussion_update.add_argument("topic")
+    learning_discussion_update.add_argument("--title")
+    learning_discussion_update.add_argument("--content")
+    learning_discussion_update.add_argument("--confirmation-token")
+
+    learning_discussion_delete = sub.add_parser(
+        "learning-discussion-delete",
+        help="delete an allowed learner discussion after confirmation",
+    )
+    learning_discussion_delete.add_argument("course")
+    learning_discussion_delete.add_argument("topic")
+    learning_discussion_delete.add_argument("--confirmation-token")
+
+    learning_discussion_reply_create = sub.add_parser(
+        "learning-discussion-reply-create",
+        help="reply to a learner discussion after confirmation",
+    )
+    learning_discussion_reply_create.add_argument("course")
+    learning_discussion_reply_create.add_argument("topic")
+    learning_discussion_reply_create.add_argument("content")
+    learning_discussion_reply_create.add_argument("--reply-to", default="")
+    learning_discussion_reply_create.add_argument("--anonymous", action="store_true")
+    learning_discussion_reply_create.add_argument("--confirmation-token")
+
+    learning_discussion_reply_update = sub.add_parser(
+        "learning-discussion-reply-update",
+        help="update an owned learner discussion reply after confirmation",
+    )
+    learning_discussion_reply_update.add_argument("course")
+    learning_discussion_reply_update.add_argument("topic")
+    learning_discussion_reply_update.add_argument("reply")
+    learning_discussion_reply_update.add_argument("content")
+    learning_discussion_reply_update.add_argument("--confirmation-token")
+
+    learning_discussion_reply_delete = sub.add_parser(
+        "learning-discussion-reply-delete",
+        help="delete an owned learner discussion reply after confirmation",
+    )
+    learning_discussion_reply_delete.add_argument("course")
+    learning_discussion_reply_delete.add_argument("topic")
+    learning_discussion_reply_delete.add_argument("reply")
+    learning_discussion_reply_delete.add_argument("--confirmation-token")
+
     for command, help_text in (
         ("learning-homeworks", "list learner homework without opening an assignment"),
         ("learning-exams", "list learner exams without entering or starting an exam"),
@@ -5804,6 +5872,78 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
                 "search": args.search,
                 "class_only": args.class_only,
             },
+        )
+    if args.command == "learning-discussion-read":
+        return await runtime.execute(
+            "learning.course.discussions.topic.read",
+            {
+                "course": args.course,
+                "topic": args.topic,
+                "class_only": args.class_only,
+                "order": args.order,
+                "reply_search": args.reply_search,
+            },
+        )
+    if args.command == "learning-discussion-create":
+        return await runtime.execute(
+            "learning.course.discussions.topic.create",
+            {
+                "course": args.course,
+                "title": args.title,
+                "content": args.content,
+                "anonymous": args.anonymous,
+            },
+            args.confirmation_token,
+        )
+    if args.command == "learning-discussion-update":
+        return await runtime.execute(
+            "learning.course.discussions.topic.update",
+            {
+                "course": args.course,
+                "topic": args.topic,
+                "title": args.title,
+                "content": args.content,
+            },
+            args.confirmation_token,
+        )
+    if args.command == "learning-discussion-delete":
+        return await runtime.execute(
+            "learning.course.discussions.topic.delete",
+            {"course": args.course, "topic": args.topic},
+            args.confirmation_token,
+        )
+    if args.command == "learning-discussion-reply-create":
+        return await runtime.execute(
+            "learning.course.discussions.reply.create",
+            {
+                "course": args.course,
+                "topic": args.topic,
+                "content": args.content,
+                "reply_to": args.reply_to,
+                "anonymous": args.anonymous,
+            },
+            args.confirmation_token,
+        )
+    if args.command == "learning-discussion-reply-update":
+        return await runtime.execute(
+            "learning.course.discussions.reply.update",
+            {
+                "course": args.course,
+                "topic": args.topic,
+                "reply": args.reply,
+                "content": args.content,
+            },
+            args.confirmation_token,
+        )
+    if args.command == "learning-discussion-reply-delete":
+        return await runtime.execute(
+            "learning.course.discussions.reply.delete",
+            {
+                "course": args.course,
+                "topic": args.topic,
+                "reply": args.reply,
+            },
+            args.confirmation_token,
         )
     if args.command in {"learning-homeworks", "learning-exams", "learning-self-tests"}:
         action = {

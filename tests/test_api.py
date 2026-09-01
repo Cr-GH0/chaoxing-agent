@@ -1466,6 +1466,10 @@ def test_learning_discussion_class_search_filters_locally(monkeypatch) -> None:
                         {"id": 2, "uuid": "b", "title": "Writing process"},
                     ],
                     "folder_list": [],
+                    "userAuth": {
+                        "groupAuth": {"examEnc": "list-secret"},
+                        "operationAuth": {"add": 1},
+                    },
                     "poff": {"lastPage": True},
                 }
             )
@@ -1496,6 +1500,380 @@ def test_learning_discussion_class_search_filters_locally(monkeypatch) -> None:
     assert session.params[0]["kw"] == ""
     assert session.params[0]["searchType"] == "4"
     assert [topic["title"] for topic in result["topics"]] == ["Environmental issue"]
+    assert result["permissions"]["groupAuth"]["examEnc"] == "[redacted]"
+    assert result["permissions"]["operationAuth"]["add"] == 1
+    assert "list-secret" not in str(result)
+
+
+def test_read_learning_discussion_topic_paginates_and_verifies_course(monkeypatch) -> None:
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    course = {
+        "course_id": "10",
+        "course_name": "Writing",
+        "clazz_id": "20",
+    }
+    listed_topic = {
+        "topic_id": "1",
+        "uuid": "topic-1",
+        "bbs_id": "bbs-1",
+        "title": "Environmental issue",
+    }
+    monkeypatch.setattr(
+        api,
+        "list_learning_discussions",
+        lambda *args, **kwargs: {
+            "bbs_id": "bbs-1",
+            "topics": [listed_topic],
+        },
+    )
+    session = object()
+    page = type("Page", (), {"url": "https://groupweb.chaoxing.com/course/topic"})()
+    monkeypatch.setattr(
+        api,
+        "_learning_module_response",
+        lambda *args: {
+            "session": session,
+            "response": page,
+            "course_context": {"values": {"bbsid": "bbs-1"}},
+            "html": "",
+        },
+    )
+    detailed_topic = parse_discussion_topic(
+        {
+            "id": 1,
+            "uuid": "topic-1",
+            "bbsid": "bbs-1",
+            "title": "Environmental issue",
+            "content": "Details",
+            "reply_count": 2,
+        }
+    )
+    monkeypatch.setattr(
+        api,
+        "_discussion_topic_payload",
+        lambda *args, **kwargs: ({}, detailed_topic),
+    )
+    calls: list[tuple[str, dict]] = []
+
+    def request(_session, path, _operation, **kwargs):
+        calls.append((path, kwargs))
+        if path.endswith("getTopReplyList"):
+            return {
+                "status": True,
+                "datas": [{"id": 1, "uuid": "reply-top", "content": "Pinned"}],
+            }
+        if kwargs["params"]["lastValue"] == "":
+            return {
+                "status": True,
+                "datas": [{"id": 1, "uuid": "reply-top", "content": "Pinned"}],
+                "poff": {"lastPage": False, "lastValue": "next", "lastAuxValue": "2"},
+            }
+        return {
+            "status": True,
+            "datas": [{"id": 2, "uuid": "reply-2", "content": "Second"}],
+            "poff": {"lastPage": True},
+        }
+
+    monkeypatch.setattr(api, "_personal_group_json_request", request)
+
+    result = api.read_learning_discussion_topic(
+        course,
+        "Environmental issue",
+        class_only=True,
+        order=1,
+        reply_search="issue",
+    )
+
+    assert result["topic"]["content"] == "Details"
+    assert result["reply_count"] == 2
+    assert result["reply_page_count"] == 2
+    assert result["complete"] is True
+    assert [reply["uuid"] for reply in result["replies"]] == ["reply-top", "reply-2"]
+    assert all(call[1]["params"]["kw"] == "issue" for call in calls)
+    assert calls[1][1]["params"]["tag"] == "classId20"
+
+
+def test_learning_discussion_topic_mutation_contracts(monkeypatch) -> None:
+    course = {
+        "course_id": "10",
+        "course_name": "Writing",
+        "clazz_id": "20",
+        "cpi": "30",
+    }
+    created_topic = parse_discussion_topic(
+        {
+            "id": 1,
+            "uuid": "created-topic",
+            "bbsid": "bbs-1",
+            "title": "Question",
+            "content": "Details",
+        }
+    )
+    create_api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(
+        create_api,
+        "list_learning_discussions",
+        lambda *args, **kwargs: {
+            "bbs_id": "bbs-1",
+            "permissions": {"operationAuth": {"add": 1, "anonymousModelButton": 0}},
+        },
+    )
+    create_context = {
+        "session": object(),
+        "bbs_id": "bbs-1",
+        "url_token": "token-1",
+        "referer": "https://groupweb.chaoxing.com/course/topic/topicList",
+    }
+    monkeypatch.setattr(create_api, "_learning_discussion_context", lambda *args: create_context)
+    monkeypatch.setattr(
+        "chaoxing_agent.api.uuid4",
+        lambda: type("FixedUUID", (), {"hex": "created-topic"})(),
+    )
+    create_calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        create_api,
+        "_personal_group_json_request",
+        lambda _session, path, _operation, **kwargs: (
+            create_calls.append((path, kwargs)) or {"status": True, "objs": {}}
+        ),
+    )
+    monkeypatch.setattr(
+        create_api,
+        "_discussion_topic_payload",
+        lambda *args, **kwargs: ({}, created_topic),
+    )
+
+    created = create_api.create_learning_discussion_topic(course, "Question", "Details")
+
+    assert created["topic"]["uuid"] == "created-topic"
+    assert created["scope"] == "selected_class"
+    assert create_calls[0][0] == "/pc/topic/bbs-1/addTopic"
+    assert create_calls[0][1]["data"]["tags"] == "classId20"
+    assert "token-1" not in str(created)
+
+    before = parse_discussion_topic(
+        {
+            "id": 1,
+            "uuid": "topic-1",
+            "bbsid": "bbs-1",
+            "title": "Before",
+            "content": "Old",
+            "userAuth": {"operationAuth": {"update": 1, "delete": 1}},
+        }
+    )
+    updated_topic = {**before, "title": "After", "content": "New"}
+    update_api = ChaoxingAPI(Path("unused-cookies.json"))
+    selection = (
+        {"bbs_id": "bbs-1"},
+        {"session": object(), "bbs_id": "bbs-1", "referer": "https://example.test/list"},
+        {},
+        before,
+    )
+    monkeypatch.setattr(update_api, "_learning_discussion_selection", lambda *args: selection)
+    monkeypatch.setattr(
+        update_api,
+        "_discussion_edit_page",
+        lambda *args: ("https://example.test/edit", {"attachment": [], "img_data": []}),
+    )
+    update_calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        update_api,
+        "_personal_group_json_request",
+        lambda _session, path, _operation, **kwargs: (
+            update_calls.append((path, kwargs)) or {"status": True}
+        ),
+    )
+    monkeypatch.setattr(
+        update_api,
+        "_discussion_topic_payload",
+        lambda *args, **kwargs: ({}, updated_topic),
+    )
+
+    updated = update_api.update_learning_discussion_topic(
+        course, "topic-1", title="After", content="New"
+    )
+
+    assert updated["topic"]["title"] == "After"
+    assert update_calls[0][0] == "/course/topic/bbs-1/topic-1/updateTopic"
+
+    delete_api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(delete_api, "_learning_discussion_selection", lambda *args: selection)
+    delete_calls: list[str] = []
+    monkeypatch.setattr(
+        delete_api,
+        "_personal_group_json_request",
+        lambda _session, path, *args, **kwargs: delete_calls.append(path) or {"status": True},
+    )
+    monkeypatch.setattr(
+        delete_api,
+        "list_learning_discussions",
+        lambda *args, **kwargs: {"topics": []},
+    )
+
+    deleted = delete_api.delete_learning_discussion_topic(course, "topic-1")
+
+    assert deleted["deleted_topic"]["uuid"] == "topic-1"
+    assert delete_calls == ["/pc/topic/bbs-1/topic-1/deleteTopic"]
+
+
+def test_learning_discussion_reply_mutation_contracts(monkeypatch) -> None:
+    course = {
+        "course_id": "10",
+        "course_name": "Writing",
+        "clazz_id": "20",
+        "cpi": "30",
+    }
+    topic = parse_discussion_topic(
+        {
+            "id": 1,
+            "uuid": "topic-1",
+            "bbsid": "bbs-1",
+            "title": "Question",
+            "userAuth": {
+                "operationAuth": {"reply": 1, "canAnonymousAddReply": 0},
+                "replyAuth": {"updateOwn": 1, "delete": 1},
+            },
+        }
+    )
+    existing_reply = {
+        "reply_id": "1",
+        "uuid": "reply-1",
+        "content": "Old reply",
+        "creator_puid": "405017213",
+        "images": [],
+        "attachments": [],
+        "replies": [],
+    }
+    created_reply = {**existing_reply, "uuid": "created-reply", "content": "New reply"}
+    detail_context = {
+        "detail_url": "https://example.test/replies",
+        "url_token": "reply-token",
+        "current_puid": "405017213",
+    }
+
+    create_api = ChaoxingAPI(Path("unused-cookies.json"))
+    create_reads = iter(
+        [
+            {"topic": topic, "replies": [existing_reply]},
+            {"topic": topic, "replies": [existing_reply, created_reply]},
+        ]
+    )
+    monkeypatch.setattr(
+        create_api, "read_learning_discussion_topic", lambda *args: next(create_reads)
+    )
+    monkeypatch.setattr(create_api, "_session", lambda: object())
+    monkeypatch.setattr(create_api, "_discussion_reply_context", lambda *args: detail_context)
+    monkeypatch.setattr(
+        "chaoxing_agent.api.uuid4",
+        lambda: type("FixedUUID", (), {"hex": "created-reply"})(),
+    )
+    create_calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        create_api,
+        "_personal_group_json_request",
+        lambda _session, path, _operation, **kwargs: (
+            create_calls.append((path, kwargs)) or {"status": True, "datas": {}}
+        ),
+    )
+
+    created = create_api.create_learning_discussion_reply(course, "topic-1", "New reply")
+
+    assert created["reply"]["uuid"] == "created-reply"
+    assert create_calls[0][0] == "/pc/invitation/topic-1/addReplys"
+    assert create_calls[0][1]["data"]["replyId"] == "-1"
+    assert "reply-token" not in str(created)
+
+    update_api = ChaoxingAPI(Path("unused-cookies.json"))
+    updated_reply = {**existing_reply, "content": "Updated reply"}
+    update_reads = iter(
+        [
+            {"topic": topic, "replies": [existing_reply]},
+            {"topic": topic, "replies": [updated_reply]},
+        ]
+    )
+    monkeypatch.setattr(
+        update_api, "read_learning_discussion_topic", lambda *args: next(update_reads)
+    )
+    monkeypatch.setattr(update_api, "_session", lambda: object())
+    monkeypatch.setattr(update_api, "_discussion_reply_context", lambda *args: detail_context)
+    update_calls: list[str] = []
+    monkeypatch.setattr(
+        update_api,
+        "_personal_group_json_request",
+        lambda _session, path, *args, **kwargs: update_calls.append(path) or {"status": True},
+    )
+
+    updated = update_api.update_learning_discussion_reply(
+        course, "topic-1", "reply-1", "Updated reply"
+    )
+
+    assert updated["reply"]["content"] == "Updated reply"
+    assert update_calls == ["/pc/invitation/topic-1/updateReply"]
+
+    delete_api = ChaoxingAPI(Path("unused-cookies.json"))
+    delete_reads = iter(
+        [
+            {"topic": topic, "replies": [existing_reply]},
+            {"topic": topic, "replies": []},
+        ]
+    )
+    monkeypatch.setattr(
+        delete_api, "read_learning_discussion_topic", lambda *args: next(delete_reads)
+    )
+    monkeypatch.setattr(delete_api, "_session", lambda: object())
+    monkeypatch.setattr(delete_api, "_discussion_reply_context", lambda *args: detail_context)
+    delete_calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        delete_api,
+        "_personal_group_json_request",
+        lambda _session, path, _operation, **kwargs: (
+            delete_calls.append((path, kwargs)) or {"status": True}
+        ),
+    )
+
+    deleted = delete_api.delete_learning_discussion_reply(course, "topic-1", "reply-1")
+
+    assert deleted["deleted_reply"]["uuid"] == "reply-1"
+    assert delete_calls[0][0] == "/pc/invitation/topic-1/deleteReply"
+    assert delete_calls[0][1]["params"] == {"uuid": "reply-1"}
+
+
+def test_discussion_reply_context_reads_current_puid_without_exposing_page(monkeypatch) -> None:
+    html = """
+    <script>
+    window.obj = {
+      user:{"puid":405017213,"name":"Current User"},
+      urlToken:"reply-token"
+    };
+    </script>
+    """
+
+    class Response:
+        url = "https://groupweb.chaoxing.com/course/topic/v3/bbs/bbs-1/topic-1/replysList"
+        content = html.encode()
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        @staticmethod
+        def get(*args, **kwargs):
+            return Response()
+
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    context = api._discussion_reply_context(
+        Session(),
+        {"course_id": "10", "cpi": "30"},
+        {"clazz_id": "20"},
+        "bbs-1",
+        "topic-1",
+    )
+
+    assert context["current_puid"] == "405017213"
+    assert context["url_token"] == "reply-token"
 
 
 def test_learning_knowledge_graph_reads_hide_bootstrap_tokens(monkeypatch) -> None:
@@ -4167,7 +4545,10 @@ def test_personal_group_topic_read_contracts(monkeypatch) -> None:
                 "status": True,
                 "datas": [topic_raw],
                 "folder_list": [],
-                "userAuth": {"operationAuth": {"reply": 1}},
+                "userAuth": {
+                    "groupAuth": {"examEnc": "personal-list-secret"},
+                    "operationAuth": {"reply": 1},
+                },
                 "poff": {"lastPage": 1},
             }
         if path.endswith("getTopReplyList") or path.endswith("getReplyList"):
@@ -4180,6 +4561,8 @@ def test_personal_group_topic_read_contracts(monkeypatch) -> None:
     listing = api.list_personal_group_topics("课程小组", folder="讨论")
     assert listing["topics"][0]["uuid"] == "topic-1"
     assert listing["folder"]["folder_id"] == "10"
+    assert listing["permissions"]["groupAuth"]["examEnc"] == "[redacted]"
+    assert "personal-list-secret" not in str(listing)
 
     monkeypatch.setattr(
         api,
@@ -7929,6 +8312,10 @@ def test_parse_discussion_payload() -> None:
                     "praise_count": 0,
                     "top": 1,
                     "lastReply": {"replyId": 9, "name": "学生", "content": "My answer"},
+                    "userAuth": {
+                        "groupAuth": {"addData": 1, "examEnc": "topic-secret"},
+                        "operationAuth": {"reply": 1},
+                    },
                 }
             ],
             "folder_list": [{"id": 1, "folder_uuid": "folder-1", "pid": 0, "name": "讨论区"}],
@@ -7937,6 +8324,9 @@ def test_parse_discussion_payload() -> None:
     assert topics[0]["topic_id"] == "708097963"
     assert topics[0]["is_top"] is True
     assert topics[0]["last_reply"]["name"] == "学生"
+    assert topics[0]["permissions"]["groupAuth"]["examEnc"] == "[redacted]"
+    assert topics[0]["permissions"]["operationAuth"]["reply"] == 1
+    assert "topic-secret" not in str(topics)
     assert folders[0]["folder_uuid"] == "folder-1"
 
 
@@ -7950,6 +8340,12 @@ def test_parse_discussion_replies_preserves_nested_replies() -> None:
                     "content": "First answer",
                     "creater_name": "学生甲",
                     "top": 1,
+                    "attachment": [
+                        {
+                            "downloadUrl": "https://example.test/file?token=attachment-secret",
+                            "urlToken": "mapping-secret",
+                        }
+                    ],
                     "second_data": [
                         {
                             "id": 21,
@@ -7966,6 +8362,9 @@ def test_parse_discussion_replies_preserves_nested_replies() -> None:
     assert replies[0]["reply_id"] == "20"
     assert replies[0]["is_top"] is True
     assert replies[0]["replies"][0]["content"] == "Follow-up"
+    assert replies[0]["attachments"][0]["urlToken"] == "[redacted]"
+    assert "attachment-secret" not in str(replies)
+    assert "mapping-secret" not in str(replies)
 
 
 def test_resolve_discussion_reply_includes_nested_replies() -> None:

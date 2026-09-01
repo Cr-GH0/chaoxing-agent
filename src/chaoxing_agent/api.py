@@ -38,6 +38,7 @@ LEARNING_SECRET_QUERY_NAMES = {
     "examenc",
     "penc",
     "token",
+    "urltoken",
 }
 UPLOAD_BASE_URL = "https://mooc1.chaoxing.com/upload-ans"
 NOTICE_LIST_URL = "https://notice.chaoxing.com/pc/course/notice/getNoticeList"
@@ -605,6 +606,28 @@ def redact_url_query_values(url: str, names: set[str]) -> str:
         for key, value in parse_qsl(parsed.query, keep_blank_values=True)
     ]
     return parsed._replace(query=urlencode(pairs)).geturl()
+
+
+def redact_mapping_secret_values(value: Any, names: set[str]) -> Any:
+    """Recursively redact named secrets while preserving a response's public shape."""
+
+    sensitive = {name.casefold() for name in names}
+    if isinstance(value, dict):
+        return {
+            key: (
+                "[redacted]"
+                if str(key).casefold() in sensitive and bool(item)
+                else redact_mapping_secret_values(item, names)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [redact_mapping_secret_values(item, names) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_mapping_secret_values(item, names) for item in value)
+    if isinstance(value, str) and re.match(r"^https?://", value, flags=re.IGNORECASE):
+        return redact_url_query_values(value, names)
+    return value
 
 
 def parse_page_values(html: str, names: tuple[str, ...]) -> dict[str, str]:
@@ -5806,6 +5829,7 @@ def parse_discussion_topic(raw: dict[str, Any]) -> dict[str, Any]:
     images = raw.get("content_imgs", raw.get("img_data"))
     if not isinstance(images, list):
         images = []
+    images = redact_mapping_secret_values(images, LEARNING_SECRET_QUERY_NAMES)
     last_reply = raw.get("lastReply")
     if not isinstance(last_reply, dict):
         last_reply = {}
@@ -5815,6 +5839,7 @@ def parse_discussion_topic(raw: dict[str, Any]) -> dict[str, Any]:
     permissions = raw.get("userAuth")
     if not isinstance(permissions, dict):
         permissions = {}
+    permissions = redact_mapping_secret_values(permissions, LEARNING_SECRET_QUERY_NAMES)
     return {
         "topic_id": str(raw.get("id") or "").strip(),
         "uuid": str(raw.get("uuid") or "").strip(),
@@ -5843,9 +5868,14 @@ def parse_discussion_topic(raw: dict[str, Any]) -> dict[str, Any]:
         "reply_setting": quote_info.get("replySetting")
         if isinstance(quote_info.get("replySetting"), dict)
         else {},
-        "share_url": str(raw.get("shareUrl") or ""),
+        "share_url": redact_url_query_values(
+            str(raw.get("shareUrl") or ""), LEARNING_SECRET_QUERY_NAMES
+        ),
         "images": images,
-        "score": raw.get("score") if isinstance(raw.get("score"), dict) else {},
+        "score": redact_mapping_secret_values(
+            raw.get("score") if isinstance(raw.get("score"), dict) else {},
+            LEARNING_SECRET_QUERY_NAMES,
+        ),
         "permissions": permissions,
         "last_reply": {
             "reply_id": str(last_reply.get("replyId") or ""),
@@ -5959,9 +5989,11 @@ def parse_discussion_replies(payload: dict[str, Any], *, is_top: bool) -> list[d
         attachments = raw.get("attachment")
         if not isinstance(attachments, list):
             attachments = []
+        attachments = redact_mapping_secret_values(attachments, LEARNING_SECRET_QUERY_NAMES)
         images = raw.get("img_data")
         if not isinstance(images, list):
             images = []
+        images = redact_mapping_secret_values(images, LEARNING_SECRET_QUERY_NAMES)
         children = raw.get("second_data")
         if not isinstance(children, list):
             children = []
@@ -5981,7 +6013,10 @@ def parse_discussion_replies(payload: dict[str, Any], *, is_top: bool) -> list[d
             "is_top": top or bool(raw.get("top")),
             "is_anonymous": bool(raw.get("isAnonymous")),
             "praise_count": raw.get("praiseCount"),
-            "score": raw.get("score") if isinstance(raw.get("score"), dict) else {},
+            "score": redact_mapping_secret_values(
+                raw.get("score") if isinstance(raw.get("score"), dict) else {},
+                LEARNING_SECRET_QUERY_NAMES,
+            ),
             "images": images,
             "attachments": attachments,
             "replies": [normalize(child, False) for child in children if isinstance(child, dict)],
@@ -17315,7 +17350,11 @@ class ChaoxingAPI:
             if page == 1:
                 displayed_folders = page_folders
                 raw_permissions = payload.get("userAuth")
-                permissions = raw_permissions if isinstance(raw_permissions, dict) else {}
+                permissions = (
+                    redact_mapping_secret_values(raw_permissions, LEARNING_SECRET_QUERY_NAMES)
+                    if isinstance(raw_permissions, dict)
+                    else {}
+                )
             poff = payload.get("poff") if isinstance(payload.get("poff"), dict) else {}
             if bool(poff.get("lastPage")) or not page_topics:
                 break
@@ -21674,6 +21713,28 @@ class ChaoxingAPI:
             "verification": "learner model-specific graph data refreshed through HTTP",
         }
 
+    def _learning_discussion_context(self, course: dict[str, Any]) -> dict[str, Any]:
+        module = self._learning_module_response(course, "讨论")
+        course_context = module.get("course_context")
+        course_context = course_context if isinstance(course_context, dict) else {}
+        values = course_context.get("values")
+        values = values if isinstance(values, dict) else {}
+        bbs_id = str(values.get("bbsid") or "")
+        token_match = re.search(
+            r"\burlToken\s*:\s*(['\"])(.*?)\1",
+            str(module.get("html") or ""),
+            flags=re.S,
+        )
+        if not bbs_id:
+            raise ChaoxingAPIError("learner course response did not expose bbsid")
+        return {
+            "session": module["session"],
+            "module": module,
+            "referer": str(module["response"].url),
+            "bbs_id": bbs_id,
+            "url_token": token_match.group(2) if token_match else "",
+        }
+
     def list_learning_discussions(
         self,
         course: dict[str, Any],
@@ -21681,13 +21742,10 @@ class ChaoxingAPI:
         search: str = "",
         class_only: bool = False,
     ) -> dict[str, Any]:
-        module = self._learning_module_response(course, "讨论")
-        session = module["session"]
-        context = module["course_context"]
-        values = context.get("values") if isinstance(context.get("values"), dict) else {}
-        bbs_id = str(values.get("bbsid") or "")
-        if not bbs_id:
-            raise ChaoxingAPIError("learner course response did not expose bbsid")
+        discussion = self._learning_discussion_context(course)
+        module = discussion["module"]
+        session = discussion["session"]
+        bbs_id = discussion["bbs_id"]
         endpoint = f"{GROUPWEB_BASE_URL}/course/topic/{bbs_id}/getTopicList"
         topics: list[dict[str, Any]] = []
         folders: list[dict[str, Any]] = []
@@ -21737,7 +21795,11 @@ class ChaoxingAPI:
             if page == 1:
                 folders = page_folders
                 user_auth = payload.get("userAuth")
-                permissions = user_auth if isinstance(user_auth, dict) else {}
+                permissions = (
+                    redact_mapping_secret_values(user_auth, LEARNING_SECRET_QUERY_NAMES)
+                    if isinstance(user_auth, dict)
+                    else {}
+                )
             poff = payload.get("poff") if isinstance(payload.get("poff"), dict) else {}
             if bool(poff.get("lastPage")) or not page_topics:
                 break
@@ -21770,6 +21832,516 @@ class ChaoxingAPI:
             "folders": folders,
             "permissions": permissions,
             "verification": f"parsed {len(topics)} learner discussion topics through HTTP",
+        }
+
+    def _learning_discussion_selection(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        *,
+        class_only: bool = False,
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
+        listing = self.list_learning_discussions(course, class_only=class_only)
+        selected = resolve_discussion_topic(listing["topics"], topic_query)
+        context = self._learning_discussion_context(course)
+        if context["bbs_id"] != listing["bbs_id"]:
+            raise ChaoxingAPIError("learner discussion context changed while resolving the topic")
+        raw, topic = self._discussion_topic_payload(
+            context["session"],
+            str(selected.get("uuid") or ""),
+            referer=context["referer"],
+        )
+        if topic["uuid"] != selected["uuid"] or topic["bbs_id"] != listing["bbs_id"]:
+            raise ChaoxingAPIError("learner discussion detail returned a different topic or course")
+        return listing, context, raw, topic
+
+    def read_learning_discussion_topic(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        *,
+        class_only: bool = False,
+        order: int = 2,
+        reply_search: str = "",
+    ) -> dict[str, Any]:
+        if order not in {1, 2}:
+            raise ChaoxingAPIError(
+                "learner discussion reply order must be 1 (oldest) or 2 (newest)"
+            )
+        listing, context, _raw_topic, topic = self._learning_discussion_selection(
+            course,
+            topic_query,
+            class_only=class_only,
+        )
+        bbs_id = listing["bbs_id"]
+        topic_uuid = topic["uuid"]
+        session = context["session"]
+        referer = context["referer"]
+
+        common_params = {
+            "bbsid": bbs_id,
+            "uuid": topic_uuid,
+            "tag": f"classId{course['clazz_id']}" if class_only else "",
+            "order": str(order),
+            "kw": reply_search.strip(),
+        }
+        top_payload = self._personal_group_json_request(
+            session,
+            "/pc/invitation/getTopReplyList",
+            "learner discussion top replies",
+            params=common_params,
+            referer=referer,
+        )
+        replies = parse_discussion_replies(top_payload, is_top=True)
+
+        last_value = ""
+        last_aux_value = ""
+        page_count = 0
+        complete = False
+        while page_count < 100:
+            payload = self._personal_group_json_request(
+                session,
+                "/pc/invitation/getReplyList",
+                "learner discussion replies",
+                params={
+                    **common_params,
+                    "lastValue": last_value,
+                    "lastAuxValue": last_aux_value,
+                },
+                referer=referer,
+            )
+            page_replies = parse_discussion_replies(payload, is_top=False)
+            replies.extend(page_replies)
+            page_count += 1
+            poff = payload.get("poff") if isinstance(payload.get("poff"), dict) else {}
+            if bool(poff.get("lastPage")) or not page_replies:
+                complete = True
+                break
+            next_value = str(poff.get("lastValue") or "")
+            next_aux_value = str(poff.get("lastAuxValue") or "")
+            if not next_value or (next_value, next_aux_value) == (
+                last_value,
+                last_aux_value,
+            ):
+                raise ChaoxingAPIError(
+                    "learner discussion reply pagination stopped before the last page"
+                )
+            last_value = next_value
+            last_aux_value = next_aux_value
+
+        unique_replies: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for reply in replies:
+            identity = str(reply.get("uuid") or reply.get("reply_id") or "")
+            if identity and identity in seen:
+                continue
+            if identity:
+                seen.add(identity)
+            reply["index"] = len(unique_replies) + 1
+            unique_replies.append(reply)
+
+        reply_scope = "matching visible replies" if reply_search.strip() else "visible replies"
+        verification = (
+            f"read learner discussion {topic_uuid} and all {len(unique_replies)} {reply_scope}"
+            if complete
+            else (
+                f"read learner discussion {topic_uuid} and {len(unique_replies)} {reply_scope}; "
+                "the 100-page safety limit was reached"
+            )
+        )
+        return {
+            **self._learning_course_result(course),
+            "scope": "selected_class" if class_only else "course_all_classes",
+            "reply_order": "oldest_first" if order == 1 else "newest_first",
+            "reply_search": reply_search.strip(),
+            "topic": topic,
+            "reported_reply_count": topic.get("reply_count"),
+            "reply_count": len(unique_replies),
+            "reply_page_count": page_count,
+            "complete": complete,
+            "replies": unique_replies,
+            "verification": verification,
+        }
+
+    @staticmethod
+    def _discussion_permission_enabled(permissions: dict[str, Any], name: str) -> bool:
+        return str(permissions.get(name) or "0").strip().casefold() in {"1", "true"}
+
+    def create_learning_discussion_topic(
+        self,
+        course: dict[str, Any],
+        title: str,
+        content: str,
+        *,
+        anonymous: bool = False,
+    ) -> dict[str, Any]:
+        title = title.strip()
+        content = content.strip()
+        if not title and not content:
+            raise ChaoxingAPIError("learner discussion title and content cannot both be empty")
+        if len(title) > 200:
+            raise ChaoxingAPIError("learner discussion title cannot exceed 200 characters")
+        listing = self.list_learning_discussions(course)
+        operation_auth = listing.get("permissions", {}).get("operationAuth", {})
+        if not isinstance(operation_auth, dict) or not self._discussion_permission_enabled(
+            operation_auth, "add"
+        ):
+            raise ChaoxingAPIError("current account cannot create a topic in this learner course")
+        if anonymous and not self._discussion_permission_enabled(
+            operation_auth, "anonymousModelButton"
+        ):
+            raise ChaoxingAPIError("this learner course does not allow anonymous topic creation")
+        context = self._learning_discussion_context(course)
+        if context["bbs_id"] != listing["bbs_id"]:
+            raise ChaoxingAPIError("learner discussion context changed before topic creation")
+        if not context["url_token"]:
+            raise ChaoxingAPIError("learner discussion page did not expose urlToken")
+
+        topic_uuid = uuid4().hex
+        payload = self._personal_group_json_request(
+            context["session"],
+            f"/pc/topic/{quote(context['bbs_id'], safe='')}/addTopic",
+            "learner discussion topic creation",
+            method="POST",
+            params={"uuid": topic_uuid},
+            data={
+                "topicTitle": quote(title, safe=""),
+                "topicContent": quote(content, safe=""),
+                "files_url": "",
+                "files_attr": "",
+                "bbsid": context["bbs_id"],
+                "courseId": course["course_id"],
+                "folder_uuid": "",
+                "anonymous": "1" if anonymous else "",
+                "label": "",
+                "tags": f"classId{course['clazz_id']}",
+                "urlToken": context["url_token"],
+            },
+            referer=context["referer"],
+        )
+        try:
+            _raw, created = self._discussion_topic_payload(
+                context["session"],
+                topic_uuid,
+                referer=context["referer"],
+            )
+        except ChaoxingAPIError:
+            if payload.get("msg") and not payload.get("objs"):
+                return {
+                    **self._learning_course_result(course),
+                    "scope": "selected_class",
+                    "topic_uuid": topic_uuid,
+                    "anonymous": anonymous,
+                    "pending_review": True,
+                    "server_message": str(payload.get("msg") or ""),
+                    "verification": "server accepted the learner discussion topic for review",
+                }
+            raise
+        if (
+            created["uuid"] != topic_uuid
+            or created["bbs_id"] != context["bbs_id"]
+            or created["title"] != title
+            or created["content"] != content
+        ):
+            raise ChaoxingAPIError("created learner discussion differs after refresh")
+        return {
+            **self._learning_course_result(course),
+            "scope": "selected_class",
+            "topic": created,
+            "anonymous": anonymous,
+            "pending_review": False,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"created and re-read learner discussion topic {topic_uuid}",
+        }
+
+    def update_learning_discussion_topic(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        *,
+        title: str | None = None,
+        content: str | None = None,
+    ) -> dict[str, Any]:
+        if title is None and content is None:
+            raise ChaoxingAPIError("learner discussion title or content change is required")
+        listing, context, _raw, before = self._learning_discussion_selection(course, topic_query)
+        operation_auth = before.get("permissions", {}).get("operationAuth", {})
+        if not isinstance(operation_auth, dict) or not self._discussion_permission_enabled(
+            operation_auth, "update"
+        ):
+            raise ChaoxingAPIError("current account cannot update this learner discussion")
+        next_title = before["title"] if title is None else title.strip()
+        next_content = before["content"] if content is None else content.strip()
+        if not next_title and not next_content:
+            raise ChaoxingAPIError("learner discussion title and content cannot both be empty")
+        if len(next_title) > 200:
+            raise ChaoxingAPIError("learner discussion title cannot exceed 200 characters")
+
+        clazz = {"clazz_id": course["clazz_id"]}
+        edit_url, editable = self._discussion_edit_page(
+            context["session"],
+            course,
+            clazz,
+            listing["bbs_id"],
+            before["uuid"],
+            context["referer"],
+        )
+        files_url, files_attr = self._discussion_asset_fields(editable)
+        is_rich = bool(editable.get("rtf_content")) or bool(editable.get("isRtf"))
+        data: dict[str, Any] = {
+            "edit_topicTitle": quote(next_title, safe=""),
+            "edit_topicContent": quote(next_content, safe=""),
+            "edit_files_url": files_url,
+            "edit_files_attr": quote(files_attr, safe=""),
+            "isRichText": "1" if is_rich else "0",
+        }
+        if is_rich:
+            rich_content = (
+                str(editable.get("rtf_content") or "")
+                if content is None
+                else f"<p>{escape(next_content)}</p>"
+            )
+            data["rtf_content"] = quote(rich_content, safe="")
+        payload = self._personal_group_json_request(
+            context["session"],
+            f"/course/topic/{quote(listing['bbs_id'], safe='')}/"
+            f"{quote(before['uuid'], safe='')}/updateTopic",
+            "learner discussion topic update",
+            method="POST",
+            data=data,
+            referer=edit_url,
+        )
+        _raw, updated = self._discussion_topic_payload(
+            context["session"], before["uuid"], referer=edit_url
+        )
+        if updated["title"] != next_title or updated["content"] != next_content:
+            raise ChaoxingAPIError("updated learner discussion differs after refresh")
+        return {
+            **self._learning_course_result(course),
+            "before": before,
+            "topic": updated,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"updated and re-read learner discussion topic {before['uuid']}",
+        }
+
+    def delete_learning_discussion_topic(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+    ) -> dict[str, Any]:
+        listing, context, _raw, topic = self._learning_discussion_selection(course, topic_query)
+        operation_auth = topic.get("permissions", {}).get("operationAuth", {})
+        if not isinstance(operation_auth, dict) or not self._discussion_permission_enabled(
+            operation_auth, "delete"
+        ):
+            raise ChaoxingAPIError("current account cannot delete this learner discussion")
+        payload = self._personal_group_json_request(
+            context["session"],
+            f"/pc/topic/{quote(listing['bbs_id'], safe='')}/"
+            f"{quote(topic['uuid'], safe='')}/deleteTopic",
+            "learner discussion topic deletion",
+            method="POST",
+            referer=context["referer"],
+        )
+        refreshed = self.list_learning_discussions(course, search=topic["title"])
+        if any(item["uuid"] == topic["uuid"] for item in refreshed["topics"]):
+            raise ChaoxingAPIError("deleted learner discussion still appears after refresh")
+        return {
+            **self._learning_course_result(course),
+            "deleted_topic": topic,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"learner discussion topic {topic['uuid']} is absent after refresh",
+        }
+
+    def create_learning_discussion_reply(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        content: str,
+        *,
+        reply_to: str = "",
+        anonymous: bool = False,
+    ) -> dict[str, Any]:
+        content = content.strip()
+        if not content:
+            raise ChaoxingAPIError("learner discussion reply content cannot be empty")
+        before = self.read_learning_discussion_topic(course, topic_query)
+        topic = before["topic"]
+        operation_auth = topic.get("permissions", {}).get("operationAuth", {})
+        if not isinstance(operation_auth, dict) or not self._discussion_permission_enabled(
+            operation_auth, "reply"
+        ):
+            raise ChaoxingAPIError("current account cannot reply to this learner discussion")
+        if anonymous and not self._discussion_permission_enabled(
+            operation_auth, "canAnonymousAddReply"
+        ):
+            raise ChaoxingAPIError("this learner discussion does not allow anonymous replies")
+        parent = resolve_discussion_reply(before["replies"], reply_to) if reply_to else None
+        session = self._session()
+        context = self._discussion_reply_context(
+            session,
+            course,
+            {"clazz_id": course["clazz_id"]},
+            topic["bbs_id"],
+            topic["uuid"],
+        )
+        reply_uuid = uuid4().hex
+        payload = self._personal_group_json_request(
+            session,
+            f"/pc/invitation/{quote(topic['uuid'], safe='')}/addReplys",
+            "learner discussion reply creation",
+            method="POST",
+            data={
+                "courseId": course["course_id"],
+                "classId": course["clazz_id"],
+                "replyId": parent["reply_id"] if parent else "-1",
+                "uuid": reply_uuid,
+                "topic_content": quote(content, safe=""),
+                "files_url": "",
+                "files_attr": "",
+                "anonymous": "1" if anonymous else "",
+                "urlToken": context["url_token"],
+                "bbsid": topic["bbs_id"],
+            },
+            referer=context["detail_url"],
+        )
+        if not isinstance(payload.get("datas"), dict):
+            return {
+                **self._learning_course_result(course),
+                "topic": topic,
+                "reply_uuid": reply_uuid,
+                "reply_to": parent,
+                "anonymous": anonymous,
+                "pending_review": True,
+                "server_message": str(payload.get("msg") or ""),
+                "verification": "server accepted the learner discussion reply for review",
+            }
+        refreshed = self.read_learning_discussion_topic(course, topic["uuid"])
+        created = resolve_discussion_reply(refreshed["replies"], reply_uuid)
+        if created["content"] != content:
+            raise ChaoxingAPIError("created learner discussion reply differs after refresh")
+        return {
+            **self._learning_course_result(course),
+            "topic": topic,
+            "reply": created,
+            "reply_to": parent,
+            "anonymous": anonymous,
+            "pending_review": False,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"created and re-read learner discussion reply {reply_uuid}",
+        }
+
+    def update_learning_discussion_reply(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        reply_query: str,
+        content: str,
+    ) -> dict[str, Any]:
+        content = content.strip()
+        if not content:
+            raise ChaoxingAPIError("learner discussion reply content cannot be empty")
+        before = self.read_learning_discussion_topic(course, topic_query)
+        topic = before["topic"]
+        reply = resolve_discussion_reply(before["replies"], reply_query)
+        reply_auth = topic.get("permissions", {}).get("replyAuth", {})
+        session = self._session()
+        context = self._discussion_reply_context(
+            session,
+            course,
+            {"clazz_id": course["clazz_id"]},
+            topic["bbs_id"],
+            topic["uuid"],
+        )
+        if not context.get("current_puid") or reply["creator_puid"] != context["current_puid"]:
+            raise ChaoxingAPIError("current account can update only its own learner reply")
+        if not isinstance(reply_auth, dict) or not self._discussion_permission_enabled(
+            reply_auth, "updateOwn"
+        ):
+            raise ChaoxingAPIError("current account cannot update this learner reply")
+        image_urls = [
+            str(item.get("imgUrl") or item.get("url") or "")
+            for item in reply.get("images", [])
+            if isinstance(item, dict)
+        ]
+        files_url = ";".join(url for url in image_urls if url)
+        files_attr = ",".join(
+            json.dumps(item, ensure_ascii=False, separators=(",", ":"))
+            for item in reply.get("attachments", [])
+            if isinstance(item, dict)
+        )
+        payload = self._personal_group_json_request(
+            session,
+            f"/pc/invitation/{quote(topic['uuid'], safe='')}/updateReply",
+            "learner discussion reply update",
+            method="POST",
+            data={
+                "uuid": reply["uuid"],
+                "reply_content": quote(content, safe=""),
+                "reply_files_url": quote(files_url, safe=""),
+                "reply_files_attr": quote(files_attr, safe=""),
+            },
+            referer=context["detail_url"],
+        )
+        refreshed = self.read_learning_discussion_topic(course, topic["uuid"])
+        updated = resolve_discussion_reply(refreshed["replies"], reply["uuid"])
+        if updated["content"] != content:
+            raise ChaoxingAPIError("updated learner discussion reply differs after refresh")
+        return {
+            **self._learning_course_result(course),
+            "topic": topic,
+            "before": reply,
+            "reply": updated,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"updated and re-read learner discussion reply {reply['uuid']}",
+        }
+
+    def delete_learning_discussion_reply(
+        self,
+        course: dict[str, Any],
+        topic_query: str,
+        reply_query: str,
+    ) -> dict[str, Any]:
+        before = self.read_learning_discussion_topic(course, topic_query)
+        topic = before["topic"]
+        reply = resolve_discussion_reply(before["replies"], reply_query)
+        reply_auth = topic.get("permissions", {}).get("replyAuth", {})
+        session = self._session()
+        context = self._discussion_reply_context(
+            session,
+            course,
+            {"clazz_id": course["clazz_id"]},
+            topic["bbs_id"],
+            topic["uuid"],
+        )
+        if not context.get("current_puid") or reply["creator_puid"] != context["current_puid"]:
+            raise ChaoxingAPIError("current account can delete only its own learner reply")
+        if not isinstance(reply_auth, dict) or not self._discussion_permission_enabled(
+            reply_auth, "delete"
+        ):
+            raise ChaoxingAPIError("current account cannot delete this learner reply")
+        payload = self._personal_group_json_request(
+            session,
+            f"/pc/invitation/{quote(topic['uuid'], safe='')}/deleteReply",
+            "learner discussion reply deletion",
+            method="POST",
+            params={"uuid": reply["uuid"]},
+            referer=context["detail_url"],
+        )
+        refreshed = self.read_learning_discussion_topic(course, topic["uuid"])
+        try:
+            resolve_discussion_reply(refreshed["replies"], reply["uuid"])
+        except ChaoxingAPIError as exc:
+            if "not found" not in str(exc):
+                raise
+        else:
+            raise ChaoxingAPIError("deleted learner discussion reply still appears after refresh")
+        return {
+            **self._learning_course_result(course),
+            "topic": topic,
+            "deleted_reply": reply,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": f"learner discussion reply {reply['uuid']} is absent after refresh",
         }
 
     @staticmethod
@@ -49838,7 +50410,11 @@ class ChaoxingAPI:
             if page == 1:
                 folders = page_folders
                 user_auth = payload.get("userAuth")
-                permissions = user_auth if isinstance(user_auth, dict) else {}
+                permissions = (
+                    redact_mapping_secret_values(user_auth, LEARNING_SECRET_QUERY_NAMES)
+                    if isinstance(user_auth, dict)
+                    else {}
+                )
             poff = payload.get("poff") if isinstance(payload.get("poff"), dict) else {}
             if bool(poff.get("lastPage")) or not page_topics:
                 break
@@ -50018,7 +50594,24 @@ class ChaoxingAPI:
         url_token = token_match.group(2) if token_match else ""
         if not url_token:
             raise ChaoxingAPIError("discussion reply page did not expose urlToken")
-        return {"detail_url": response.url, "url_token": url_token}
+        current_puid = ""
+        object_marker = re.search(r"window\.obj\s*=\s*", html)
+        object_text = html[object_marker.end() :] if object_marker else html
+        user_marker = re.search(r"\buser\s*:\s*", object_text)
+        if user_marker:
+            try:
+                user, _end = json.JSONDecoder().raw_decode(
+                    object_text[user_marker.end() :].lstrip()
+                )
+            except json.JSONDecodeError:
+                user = {}
+            if isinstance(user, dict):
+                current_puid = str(user.get("puid") or "")
+        return {
+            "detail_url": response.url,
+            "url_token": url_token,
+            "current_puid": current_puid,
+        }
 
     def create_discussion_reply(
         self,

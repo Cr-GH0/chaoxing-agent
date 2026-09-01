@@ -2774,6 +2774,132 @@ async def chaoxing_list_learning_discussions(
 
 
 @mcp.tool()
+async def chaoxing_read_learning_discussion(
+    course: str,
+    topic: str,
+    class_only: bool = False,
+    order: int = 2,
+    reply_search: str = "",
+) -> dict[str, Any]:
+    """Read one learner-visible course discussion and all visible replies."""
+    return await runtime.execute(
+        "learning.course.discussions.topic.read",
+        {
+            "course": course,
+            "topic": topic,
+            "class_only": class_only,
+            "order": order,
+            "reply_search": reply_search,
+        },
+    )
+
+
+@mcp.tool()
+async def chaoxing_create_learning_discussion(
+    course: str,
+    title: str,
+    content: str,
+    anonymous: bool = False,
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm publishing a discussion in the learner's current class."""
+    return await runtime.execute(
+        "learning.course.discussions.topic.create",
+        {
+            "course": course,
+            "title": title,
+            "content": content,
+            "anonymous": anonymous,
+        },
+        confirmation_token,
+    )
+
+
+@mcp.tool()
+async def chaoxing_update_learning_discussion(
+    course: str,
+    topic: str,
+    title: str | None = None,
+    content: str | None = None,
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm updating an editable learner discussion."""
+    return await runtime.execute(
+        "learning.course.discussions.topic.update",
+        {"course": course, "topic": topic, "title": title, "content": content},
+        confirmation_token,
+    )
+
+
+@mcp.tool()
+async def chaoxing_delete_learning_discussion(
+    course: str,
+    topic: str,
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm deleting an allowed learner discussion."""
+    return await runtime.execute(
+        "learning.course.discussions.topic.delete",
+        {"course": course, "topic": topic},
+        confirmation_token,
+    )
+
+
+@mcp.tool()
+async def chaoxing_create_learning_discussion_reply(
+    course: str,
+    topic: str,
+    content: str,
+    reply_to: str = "",
+    anonymous: bool = False,
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm replying to a learner discussion or one of its replies."""
+    return await runtime.execute(
+        "learning.course.discussions.reply.create",
+        {
+            "course": course,
+            "topic": topic,
+            "content": content,
+            "reply_to": reply_to,
+            "anonymous": anonymous,
+        },
+        confirmation_token,
+    )
+
+
+@mcp.tool()
+async def chaoxing_update_learning_discussion_reply(
+    course: str,
+    topic: str,
+    reply: str,
+    content: str,
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm updating an owned learner discussion reply."""
+    return await runtime.execute(
+        "learning.course.discussions.reply.update",
+        {"course": course, "topic": topic, "reply": reply, "content": content},
+        confirmation_token,
+    )
+
+
+@mcp.tool()
+async def chaoxing_delete_learning_discussion_reply(
+    course: str,
+    topic: str,
+    reply: str,
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm deleting an owned learner discussion reply."""
+    return await runtime.execute(
+        "learning.course.discussions.reply.delete",
+        {"course": course, "topic": topic, "reply": reply},
+        confirmation_token,
+    )
+
+
+@mcp.tool()
 async def chaoxing_list_learning_homeworks(
     course: str,
     search: str = "",

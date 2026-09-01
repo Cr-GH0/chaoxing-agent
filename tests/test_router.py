@@ -517,6 +517,9 @@ def test_route_learning_course_semantic_reads() -> None:
     activities = route_command("查看我学课程《新教师入职培训》的已结束任务")
     chapters = route_command("列出我学课程《英语文体与写作》的章节")
     discussions = route_command("搜索我学课程《英语文体与写作》本班讨论《环境》")
+    discussion = route_command(
+        "查看我学课程《英语文体与写作》的讨论《Discussion on the environmental issue》回复"
+    )
     homeworks = route_command("查看我学课程《英语文体与写作》的未交作业列表")
     homework = route_command("查看我学课程《新教师入职培训》的作业《BOPPPS设计小讨论》详情")
     homework_redo = route_command("重做我学课程《新教师入职培训》的作业《BOPPPPS设计小讨论》")
@@ -546,6 +549,13 @@ def test_route_learning_course_semantic_reads() -> None:
     assert discussions.action == "learning.course.discussions.list"
     assert discussions.parameters["search"] == "环境"
     assert discussions.parameters["class_only"] is True
+    assert discussion.action == "learning.course.discussions.topic.read"
+    assert discussion.parameters == {
+        "course": "英语文体与写作",
+        "topic": "Discussion on the environmental issue",
+        "class_only": False,
+        "order": 2,
+    }
     assert homeworks.action == "learning.course.homeworks.list"
     assert homeworks.parameters["status"] == "unsubmitted"
     assert homework.action == "learning.course.homework.read"
@@ -581,6 +591,33 @@ def test_route_learning_course_semantic_reads() -> None:
     assert graph_models.action == "learning.course.knowledge_graph.models.list"
     assert graph_model.action == "learning.course.knowledge_graph.model.read"
     assert graph_model.parameters["model"] == "知识图谱"
+
+
+def test_route_learning_discussion_mutations() -> None:
+    created = route_command(
+        "在我学课程《英语文体与写作》中发起讨论《环境问题》《请说明一种解决办法》"
+    )
+    updated = route_command("修改我学课程《英语文体与写作》的讨论《环境问题》正文为《新的正文》")
+    deleted = route_command("删除我学课程《英语文体与写作》的讨论《环境问题》")
+    replied = route_command("回复我学课程《英语文体与写作》的讨论《环境问题》：《我的看法》")
+    reply_updated = route_command(
+        "修改我学课程《英语文体与写作》的讨论《环境问题》回复《原回复》为《新回复》"
+    )
+    reply_deleted = route_command("删除我学课程《英语文体与写作》的讨论《环境问题》回复《原回复》")
+
+    assert created.action == "learning.course.discussions.topic.create"
+    assert created.parameters["title"] == "环境问题"
+    assert created.parameters["content"] == "请说明一种解决办法"
+    assert updated.action == "learning.course.discussions.topic.update"
+    assert updated.parameters["topic"] == "环境问题"
+    assert updated.parameters["content"] == "新的正文"
+    assert deleted.action == "learning.course.discussions.topic.delete"
+    assert replied.action == "learning.course.discussions.reply.create"
+    assert replied.parameters["content"] == "我的看法"
+    assert reply_updated.action == "learning.course.discussions.reply.update"
+    assert reply_updated.parameters["reply"] == "原回复"
+    assert reply_updated.parameters["content"] == "新回复"
+    assert reply_deleted.action == "learning.course.discussions.reply.delete"
 
 
 def test_route_course_classes_with_quoted_course() -> None:

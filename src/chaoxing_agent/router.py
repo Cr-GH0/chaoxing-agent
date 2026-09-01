@@ -5417,6 +5417,168 @@ def route_command(command: str) -> CommandPlan:
                 missing_fields=missing,
                 message="请依次用书名号提供课程和作业。" if missing else "",
             )
+        if "讨论" in text and re.search(r"删除.*(?:回复|评论)|(?:回复|评论).*删除", text):
+            parameters: dict[str, object] = {}
+            operands = list(quoted)
+            if operands:
+                parameters["course"] = operands.pop(0)
+            if operands and operands[0] == "讨论":
+                operands.pop(0)
+            for key, value in zip(("topic", "reply"), operands, strict=False):
+                parameters[key] = value
+            missing = [key for key in ("course", "topic", "reply") if key not in parameters]
+            return CommandPlan(
+                text,
+                "learning.course.discussions.reply.delete",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程、讨论和回复。" if missing else "",
+            )
+        if "讨论" in text and re.search(
+            r"(?:编辑|修改).*?(?:回复|评论)|(?:回复|评论).*?(?:编辑|修改)", text
+        ):
+            parameters = {}
+            operands = list(quoted)
+            if operands:
+                parameters["course"] = operands.pop(0)
+            if operands and operands[0] == "讨论":
+                operands.pop(0)
+            for key, value in zip(("topic", "reply", "content"), operands, strict=False):
+                parameters[key] = value
+            missing = [
+                key for key in ("course", "topic", "reply", "content") if key not in parameters
+            ]
+            return CommandPlan(
+                text,
+                "learning.course.discussions.reply.update",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程、讨论、原回复和新正文。" if missing else "",
+            )
+        if (
+            "讨论" in text
+            and "回复" in text
+            and not re.search(r"查看|读取|显示|浏览|删除|编辑|修改", text)
+        ):
+            parameters = {}
+            operands = list(quoted)
+            if operands:
+                parameters["course"] = operands.pop(0)
+            if operands and operands[0] == "讨论":
+                operands.pop(0)
+            if operands:
+                parameters["topic"] = operands[0]
+            if len(operands) > 2:
+                parameters["reply_to"] = operands[1]
+                parameters["content"] = operands[2]
+            elif len(operands) > 1:
+                parameters["content"] = operands[1]
+            parameters["anonymous"] = "匿名" in text
+            missing = [key for key in ("course", "topic", "content") if key not in parameters]
+            return CommandPlan(
+                text,
+                "learning.course.discussions.reply.create",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程、讨论和回复正文。" if missing else "",
+            )
+        if "讨论" in text and "删除" in text:
+            parameters = {}
+            operands = list(quoted)
+            if operands:
+                parameters["course"] = operands.pop(0)
+            if operands and operands[0] == "讨论":
+                operands.pop(0)
+            if operands:
+                parameters["topic"] = operands[0]
+            missing = [key for key in ("course", "topic") if key not in parameters]
+            return CommandPlan(
+                text,
+                "learning.course.discussions.topic.delete",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程和讨论。" if missing else "",
+            )
+        if "讨论" in text and re.search(r"编辑|修改", text):
+            parameters = {}
+            operands = list(quoted)
+            if operands:
+                parameters["course"] = operands.pop(0)
+            if operands and operands[0] == "讨论":
+                operands.pop(0)
+            if operands:
+                parameters["topic"] = operands[0]
+            if len(operands) > 2:
+                parameters["title"] = operands[1]
+                parameters["content"] = operands[2]
+            elif len(operands) > 1:
+                if "标题" in text and not re.search(r"正文|内容", text):
+                    parameters["title"] = operands[1]
+                else:
+                    parameters["content"] = operands[1]
+            missing = [key for key in ("course", "topic") if key not in parameters]
+            if "title" not in parameters and "content" not in parameters:
+                missing.append("content")
+            return CommandPlan(
+                text,
+                "learning.course.discussions.topic.update",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程、原讨论和新标题或正文。" if missing else "",
+            )
+        if "讨论" in text and re.search(r"发布|新建|发起|创建", text):
+            parameters = {}
+            operands = list(quoted)
+            if operands:
+                parameters["course"] = operands.pop(0)
+            if operands and operands[0] == "讨论":
+                operands.pop(0)
+            for key, value in zip(("title", "content"), operands, strict=False):
+                parameters[key] = value
+            parameters["anonymous"] = "匿名" in text
+            missing = [key for key in ("course", "title", "content") if key not in parameters]
+            return CommandPlan(
+                text,
+                "learning.course.discussions.topic.create",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程、讨论标题和正文。" if missing else "",
+            )
+        if (
+            "讨论" in text
+            and re.search(r"查看|读取|显示|浏览", text)
+            and (
+                re.search(r"详情|回复|正文|内容", text)
+                or (len(quoted) >= 2 and not re.search(r"列出|列表|有哪些|搜索|查找", text))
+            )
+        ):
+            parameters: dict[str, object] = {}
+            if quoted:
+                parameters["course"] = quoted[0]
+            operands = quoted[1:]
+            if operands and operands[0] == "讨论":
+                operands = operands[1:]
+            if operands:
+                parameters["topic"] = operands[0]
+            if len(operands) > 1 and re.search(r"搜索|查找", text):
+                parameters["reply_search"] = operands[1]
+            parameters["class_only"] = bool(re.search(r"本班|当前班|这个班", text))
+            parameters["order"] = 1 if re.search(r"正序|最早|从旧到新", text) else 2
+            missing = [key for key in ("course", "topic") if key not in parameters]
+            return CommandPlan(
+                text,
+                "learning.course.discussions.topic.read",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程和讨论。" if missing else "",
+            )
         semantic_read = bool(re.search(r"列出|列表|有哪些|查看|读取|搜索|查找|浏览", text))
         semantic_actions = (
             ("自测", "learning.course.self_tests.list"),

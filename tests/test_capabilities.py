@@ -307,6 +307,13 @@ def test_core_actions_are_implemented() -> None:
         "learning.course.activities.list",
         "learning.course.chapters.list",
         "learning.course.discussions.list",
+        "learning.course.discussions.topic.read",
+        "learning.course.discussions.topic.create",
+        "learning.course.discussions.topic.update",
+        "learning.course.discussions.topic.delete",
+        "learning.course.discussions.reply.create",
+        "learning.course.discussions.reply.update",
+        "learning.course.discussions.reply.delete",
         "learning.course.homeworks.list",
         "learning.course.exams.list",
         "learning.course.self_tests.list",
@@ -378,7 +385,7 @@ def test_report_keeps_observed_separate_from_implemented() -> None:
     report = capability_report()
     counts = report["summary"]["by_state"]
     assert counts["observed"] == 43
-    assert counts["implemented"] == 554
+    assert counts["implemented"] == 561
 
 
 def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None:
@@ -431,6 +438,7 @@ def test_live_verification_distinguishes_supported_cloud_actions_from_limited_co
         "learning.course.activities.list",
         "learning.course.chapters.list",
         "learning.course.discussions.list",
+        "learning.course.discussions.topic.read",
         "learning.course.homeworks.list",
         "learning.course.homework.read",
         "learning.course.homework.attempts.list",

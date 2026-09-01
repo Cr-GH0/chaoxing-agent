@@ -183,6 +183,38 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
             return {"course": course, "topics": [], **kwargs}
 
         @staticmethod
+        def read_learning_discussion_topic(course, topic, **kwargs):
+            return {"course": course, "topic": {"title": topic}, **kwargs}
+
+        @staticmethod
+        def create_learning_discussion_topic(course, title, content, **kwargs):
+            return {"course": course, "topic": {"title": title, "content": content}, **kwargs}
+
+        @staticmethod
+        def update_learning_discussion_topic(course, topic, **kwargs):
+            return {"course": course, "topic": {"title": topic}, **kwargs}
+
+        @staticmethod
+        def delete_learning_discussion_topic(course, topic):
+            return {"course": course, "deleted_topic": {"title": topic}}
+
+        @staticmethod
+        def create_learning_discussion_reply(course, topic, content, **kwargs):
+            return {"course": course, "topic": topic, "reply": {"content": content}, **kwargs}
+
+        @staticmethod
+        def update_learning_discussion_reply(course, topic, reply, content):
+            return {
+                "course": course,
+                "topic": topic,
+                "reply": {"before": reply, "content": content},
+            }
+
+        @staticmethod
+        def delete_learning_discussion_reply(course, topic, reply):
+            return {"course": course, "topic": topic, "deleted_reply": {"content": reply}}
+
+        @staticmethod
         def list_learning_homeworks(course, **kwargs):
             return {"course": course, "homeworks": [], **kwargs}
 
@@ -297,6 +329,56 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
         "learning.course.discussions.list",
         {"course": "英语文体与写作", "class_only": True},
     )
+    discussion = await runtime.execute(
+        "learning.course.discussions.topic.read",
+        {
+            "course": "英语文体与写作",
+            "topic": "环境问题",
+            "order": "1",
+            "reply_search": "pollution",
+        },
+    )
+    mutation_parameters = {
+        "learning.course.discussions.topic.create": {
+            "course": "英语文体与写作",
+            "title": "环境问题",
+            "content": "正文",
+        },
+        "learning.course.discussions.topic.update": {
+            "course": "英语文体与写作",
+            "topic": "环境问题",
+            "content": "新正文",
+        },
+        "learning.course.discussions.topic.delete": {
+            "course": "英语文体与写作",
+            "topic": "环境问题",
+        },
+        "learning.course.discussions.reply.create": {
+            "course": "英语文体与写作",
+            "topic": "环境问题",
+            "content": "回复",
+        },
+        "learning.course.discussions.reply.update": {
+            "course": "英语文体与写作",
+            "topic": "环境问题",
+            "reply": "回复",
+            "content": "新回复",
+        },
+        "learning.course.discussions.reply.delete": {
+            "course": "英语文体与写作",
+            "topic": "环境问题",
+            "reply": "回复",
+        },
+    }
+    discussion_mutations = {}
+    for action, parameters in mutation_parameters.items():
+        mutation_preview = await runtime.execute(action, parameters)
+        assert mutation_preview["status"] == "confirmation_required"
+        discussion_mutations[action] = await runtime.execute(
+            action,
+            parameters,
+            mutation_preview["confirmation"]["token"],
+        )
     homeworks = await runtime.execute(
         "learning.course.homeworks.list", {"course": "英语文体与写作"}
     )
@@ -372,6 +454,22 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
     assert activities["result"]["status"] == "ended"
     assert chapters["result"]["chapters"][0]["title"] == "第一章"
     assert discussions["result"]["class_only"] is True
+    assert discussion["result"]["topic"]["title"] == "环境问题"
+    assert discussion["result"]["order"] == 1
+    assert discussion["result"]["reply_search"] == "pollution"
+    assert all(result["status"] == "ok" for result in discussion_mutations.values())
+    assert (
+        discussion_mutations["learning.course.discussions.topic.create"]["result"]["topic"][
+            "content"
+        ]
+        == "正文"
+    )
+    assert (
+        discussion_mutations["learning.course.discussions.reply.update"]["result"]["reply"][
+            "content"
+        ]
+        == "新回复"
+    )
     assert homeworks["result"]["homeworks"] == []
     assert homework["result"]["homework"]["title"] == "BOPPPS 设计"
     assert homework_answer["result"]["form"]["answer_form_detected"] is True
