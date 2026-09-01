@@ -2726,6 +2726,114 @@ async def chaoxing_open_learning_course_module(course: str, module: str) -> dict
 
 
 @mcp.tool()
+async def chaoxing_list_learning_activities(
+    course: str,
+    search: str = "",
+    status: str = "all",
+) -> dict[str, Any]:
+    """List learner activities without entering or starting an activity."""
+    return await runtime.execute(
+        "learning.course.activities.list",
+        {"course": course, "search": search, "status": status},
+    )
+
+
+@mcp.tool()
+async def chaoxing_list_learning_chapters(course: str, search: str = "") -> dict[str, Any]:
+    """List learner-visible chapters and pending task-point counts."""
+    return await runtime.execute(
+        "learning.course.chapters.list",
+        {"course": course, "search": search},
+    )
+
+
+@mcp.tool()
+async def chaoxing_list_learning_discussions(
+    course: str,
+    search: str = "",
+    class_only: bool = False,
+) -> dict[str, Any]:
+    """List discussion topics visible to a learner in a course or the current class."""
+    return await runtime.execute(
+        "learning.course.discussions.list",
+        {"course": course, "search": search, "class_only": class_only},
+    )
+
+
+@mcp.tool()
+async def chaoxing_list_learning_homeworks(
+    course: str,
+    search: str = "",
+    status: str = "",
+) -> dict[str, Any]:
+    """List learner homework without opening an assignment or creating answer state."""
+    return await runtime.execute(
+        "learning.course.homeworks.list",
+        {"course": course, "search": search, "status": status},
+    )
+
+
+@mcp.tool()
+async def chaoxing_list_learning_exams(
+    course: str,
+    search: str = "",
+    status: str = "",
+) -> dict[str, Any]:
+    """List learner exams without entering an exam or starting a timer."""
+    return await runtime.execute(
+        "learning.course.exams.list",
+        {"course": course, "search": search, "status": status},
+    )
+
+
+@mcp.tool()
+async def chaoxing_list_learning_self_tests(
+    course: str,
+    search: str = "",
+    status: str = "",
+) -> dict[str, Any]:
+    """List learner self-tests without creating, entering, or submitting one."""
+    return await runtime.execute(
+        "learning.course.self_tests.list",
+        {"course": course, "search": search, "status": status},
+    )
+
+
+@mcp.tool()
+async def chaoxing_list_learning_materials(
+    course: str,
+    folder: str = "",
+    search: str = "",
+) -> dict[str, Any]:
+    """List learner-visible course materials or the contents of one first-level folder."""
+    return await runtime.execute(
+        "learning.course.materials.list",
+        {"course": course, "folder": folder, "search": search},
+    )
+
+
+@mcp.tool()
+async def chaoxing_list_learning_ai_tools(course: str) -> dict[str, Any]:
+    """List tools currently exposed by a learner AI workbench."""
+    return await runtime.execute("learning.course.ai_tools.list", {"course": course})
+
+
+@mcp.tool()
+async def chaoxing_read_learning_wrong_questions(course: str) -> dict[str, Any]:
+    """Read the current wrong-question summary without entering a question."""
+    return await runtime.execute(
+        "learning.course.wrong_questions.summary",
+        {"course": course},
+    )
+
+
+@mcp.tool()
+async def chaoxing_read_learning_records(course: str) -> dict[str, Any]:
+    """Read learner progress, score, attendance, points, and activity metrics."""
+    return await runtime.execute("learning.course.records.read", {"course": course})
+
+
+@mcp.tool()
 async def chaoxing_read_learning_integrity(course: str) -> dict[str, Any]:
     """Read whether a joined course currently requires integrity acceptance."""
     return await runtime.execute(

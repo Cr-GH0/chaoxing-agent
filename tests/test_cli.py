@@ -31,6 +31,38 @@ def test_learning_cli_parses_list_modules_open_and_integrity() -> None:
     assert accepted.confirmation_token == "token-1"
 
 
+def test_learning_cli_parses_semantic_read_commands() -> None:
+    activities = build_parser().parse_args(
+        ["learning-activities", "新教师入职培训", "--status", "ended", "--search", "讨论"]
+    )
+    chapters = build_parser().parse_args(["learning-chapters", "英语文体与写作", "--search", "1.1"])
+    discussions = build_parser().parse_args(
+        ["learning-discussions", "英语文体与写作", "--class-only", "--search", "环境"]
+    )
+    homeworks = build_parser().parse_args(
+        ["learning-homeworks", "英语文体与写作", "--status", "unsubmitted"]
+    )
+    exams = build_parser().parse_args(["learning-exams", "英语文体与写作"])
+    self_tests = build_parser().parse_args(["learning-self-tests", "英语文体与写作"])
+    materials = build_parser().parse_args(
+        ["learning-materials", "英语文体与写作", "--folder", "Week 1"]
+    )
+    ai_tools = build_parser().parse_args(["learning-ai-tools", "英语文体与写作"])
+    wrong = build_parser().parse_args(["learning-wrong-questions", "英语文体与写作"])
+    records = build_parser().parse_args(["learning-records", "英语文体与写作"])
+
+    assert activities.status == "ended" and activities.search == "讨论"
+    assert chapters.search == "1.1"
+    assert discussions.class_only is True and discussions.search == "环境"
+    assert homeworks.status == "unsubmitted"
+    assert exams.command == "learning-exams"
+    assert self_tests.command == "learning-self-tests"
+    assert materials.folder == "Week 1"
+    assert ai_tools.command == "learning-ai-tools"
+    assert wrong.command == "learning-wrong-questions"
+    assert records.command == "learning-records"
+
+
 def test_job_ability_cli_parses_search_catalog_and_industry_commands() -> None:
     search = build_parser().parse_args(
         ["job-search", "英语教师", "--education", "本科", "--page", "2", "--page-size", "30"]

@@ -490,6 +490,35 @@ def test_route_learning_course_list_modules_open_and_integrity() -> None:
     assert accept.action == "learning.course.integrity.accept"
 
 
+def test_route_learning_course_semantic_reads() -> None:
+    activities = route_command("查看我学课程《新教师入职培训》的已结束任务")
+    chapters = route_command("列出我学课程《英语文体与写作》的章节")
+    discussions = route_command("搜索我学课程《英语文体与写作》本班讨论《环境》")
+    homeworks = route_command("查看我学课程《英语文体与写作》的未交作业列表")
+    exams = route_command("列出我学课程《英语文体与写作》的考试")
+    self_tests = route_command("查看我学课程《英语文体与写作》的自测")
+    materials = route_command("查看我学课程《英语文体与写作》的资料文件夹《Week 1》")
+    ai_tools = route_command("查看我学课程《英语文体与写作》的AI助教工具")
+    wrong = route_command("查看我学课程《英语文体与写作》的错题集概况")
+    records = route_command("读取我学课程《英语文体与写作》的学习记录")
+
+    assert activities.action == "learning.course.activities.list"
+    assert activities.parameters["status"] == "ended"
+    assert chapters.action == "learning.course.chapters.list"
+    assert discussions.action == "learning.course.discussions.list"
+    assert discussions.parameters["search"] == "环境"
+    assert discussions.parameters["class_only"] is True
+    assert homeworks.action == "learning.course.homeworks.list"
+    assert homeworks.parameters["status"] == "unsubmitted"
+    assert exams.action == "learning.course.exams.list"
+    assert self_tests.action == "learning.course.self_tests.list"
+    assert materials.action == "learning.course.materials.list"
+    assert materials.parameters["folder"] == "Week 1"
+    assert ai_tools.action == "learning.course.ai_tools.list"
+    assert wrong.action == "learning.course.wrong_questions.summary"
+    assert records.action == "learning.course.records.read"
+
+
 def test_route_course_classes_with_quoted_course() -> None:
     plan = route_command("查看《语言测试示例》的班级")
     assert plan.action == "courses.list_classes"

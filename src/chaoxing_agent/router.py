@@ -5225,6 +5225,86 @@ def route_command(command: str) -> CommandPlan:
                 missing_fields=[] if quoted else ["course"],
                 message="请用书名号提供要查看学生侧功能入口的课程。" if not quoted else "",
             )
+        if "学习记录" in text or re.search(r"学习(进度|统计)", text):
+            parameters = {"course": quoted[0]} if quoted else {}
+            return CommandPlan(
+                text,
+                "learning.course.records.read",
+                parameters=parameters,
+                confidence=0.98 if quoted else 0.72,
+                missing_fields=[] if quoted else ["course"],
+                message="请用书名号提供要读取学习记录的课程。" if not quoted else "",
+            )
+        if "错题" in text:
+            parameters = {"course": quoted[0]} if quoted else {}
+            return CommandPlan(
+                text,
+                "learning.course.wrong_questions.summary",
+                parameters=parameters,
+                confidence=0.98 if quoted else 0.72,
+                missing_fields=[] if quoted else ["course"],
+                message="请用书名号提供要查看错题概况的课程。" if not quoted else "",
+            )
+        if re.search(r"AI\s*(助教|工具|智能体)|资料助手", text, flags=re.I):
+            parameters = {"course": quoted[0]} if quoted else {}
+            return CommandPlan(
+                text,
+                "learning.course.ai_tools.list",
+                parameters=parameters,
+                confidence=0.98 if quoted else 0.72,
+                missing_fields=[] if quoted else ["course"],
+                message="请用书名号提供要查看 AI 工具的课程。" if not quoted else "",
+            )
+        semantic_read = bool(re.search(r"列出|列表|有哪些|查看|读取|搜索|查找|浏览", text))
+        semantic_actions = (
+            ("自测", "learning.course.self_tests.list"),
+            ("考试", "learning.course.exams.list"),
+            ("作业", "learning.course.homeworks.list"),
+            ("讨论", "learning.course.discussions.list"),
+            ("资料", "learning.course.materials.list"),
+            ("章节", "learning.course.chapters.list"),
+            ("任务", "learning.course.activities.list"),
+        )
+        semantic = next(
+            ((marker, action) for marker, action in semantic_actions if marker in text),
+            None,
+        )
+        if semantic_read and semantic:
+            marker, action = semantic
+            parameters: dict[str, object] = {"course": quoted[0]} if quoted else {}
+            extra_quoted = quoted[1:]
+            if extra_quoted and extra_quoted[0] == marker:
+                extra_quoted = extra_quoted[1:]
+            if action == "learning.course.materials.list" and extra_quoted and "文件夹" in text:
+                parameters["folder"] = extra_quoted[0]
+            elif extra_quoted and re.search(r"搜索|查找", text):
+                parameters["search"] = extra_quoted[0]
+            if action == "learning.course.discussions.list":
+                parameters["class_only"] = bool(re.search(r"本班|当前班|这个班", text))
+            if action in {
+                "learning.course.activities.list",
+                "learning.course.homeworks.list",
+                "learning.course.exams.list",
+                "learning.course.self_tests.list",
+            }:
+                if "未开始" in text:
+                    parameters["status"] = "not_started"
+                elif "进行中" in text:
+                    parameters["status"] = "ongoing"
+                elif re.search(r"已结束|已完成", text):
+                    parameters["status"] = "ended"
+                elif "未交" in text:
+                    parameters["status"] = "unsubmitted"
+                elif "已交" in text:
+                    parameters["status"] = "submitted"
+            return CommandPlan(
+                text,
+                action,
+                parameters=parameters,
+                confidence=0.98 if quoted else 0.72,
+                missing_fields=[] if quoted else ["course"],
+                message=f"请用书名号提供要查看{marker}的课程。" if not quoted else "",
+            )
         module_aliases = (
             "AI助教",
             "任务",

@@ -304,6 +304,16 @@ def test_core_actions_are_implemented() -> None:
         "learning.courses.list",
         "learning.course.modules.discover",
         "learning.course.module.open",
+        "learning.course.activities.list",
+        "learning.course.chapters.list",
+        "learning.course.discussions.list",
+        "learning.course.homeworks.list",
+        "learning.course.exams.list",
+        "learning.course.self_tests.list",
+        "learning.course.materials.list",
+        "learning.course.ai_tools.list",
+        "learning.course.wrong_questions.summary",
+        "learning.course.records.read",
         "learning.course.integrity.read",
         "learning.course.integrity.accept",
         "course.modules.discover",
@@ -364,7 +374,7 @@ def test_report_keeps_observed_separate_from_implemented() -> None:
     report = capability_report()
     counts = report["summary"]["by_state"]
     assert counts["observed"] == 43
-    assert counts["implemented"] == 535
+    assert counts["implemented"] == 545
 
 
 def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None:
@@ -384,8 +394,13 @@ def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None
         "class_management",
         "learning",
     ]
-    assert coverage[("learning", "chapters")]["coverage"] == "generic_entry_only"
-    assert coverage[("learning", "chapters")]["fallback_action"] == "learning.course.module.open"
+    assert coverage[("learning", "chapters")]["coverage"] == "semantic_actions"
+    assert coverage[("learning", "chapters")]["semantic_domains"] == ["learning_chapters"]
+    assert coverage[("learning", "knowledge_graph")]["coverage"] == "generic_entry_only"
+    assert (
+        coverage[("learning", "knowledge_graph")]["fallback_action"]
+        == "learning.course.module.open"
+    )
     assert all(
         item["coverage"] == "semantic_actions"
         for item in coverage.values()
@@ -409,6 +424,16 @@ def test_live_verification_distinguishes_supported_cloud_actions_from_limited_co
         "learning.courses.list",
         "learning.course.modules.discover",
         "learning.course.module.open",
+        "learning.course.activities.list",
+        "learning.course.chapters.list",
+        "learning.course.discussions.list",
+        "learning.course.homeworks.list",
+        "learning.course.exams.list",
+        "learning.course.self_tests.list",
+        "learning.course.materials.list",
+        "learning.course.ai_tools.list",
+        "learning.course.wrong_questions.summary",
+        "learning.course.records.read",
         "learning.course.integrity.read",
         "notes.list",
         "notes.read",

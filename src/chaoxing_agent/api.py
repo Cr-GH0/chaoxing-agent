@@ -6,6 +6,7 @@ import json
 import mimetypes
 import re
 import zipfile
+from collections import Counter
 from contextlib import ExitStack
 from datetime import UTC, date, datetime, timedelta, timezone
 from html import escape, unescape
@@ -29,6 +30,15 @@ MOOC1_BASE_URL = "https://mooc1.chaoxing.com"
 MOOC2_BASE_URL = "https://mooc2-ans.chaoxing.com"
 LEARNING_COURSE_LIST_URL = MOOC2_BASE_URL + "/mooc2-ans/visit/courselistdata"
 LEARNING_INTEGRITY_UPDATE_URL = MOOC2_BASE_URL + "/mooc2-ans/mycourse/update-person-status"
+LEARNING_SECRET_QUERY_NAMES = {
+    "enc",
+    "stuenc",
+    "openc",
+    "workenc",
+    "examenc",
+    "penc",
+    "token",
+}
 UPLOAD_BASE_URL = "https://mooc1.chaoxing.com/upload-ans"
 NOTICE_LIST_URL = "https://notice.chaoxing.com/pc/course/notice/getNoticeList"
 NOTICE_DRAFT_LIST_URL = "https://notice.chaoxing.com/pc/draft/notice/getNoticeDrafts"
@@ -562,6 +572,24 @@ def append_missing_query_params(url: str, params: dict[str, Any]) -> str:
     encoded = urlencode(additions)
     query = parsed.query + ("&" if parsed.query else "") + encoded
     return parsed._replace(query=query).geturl()
+
+
+def replace_query_params(url: str, params: dict[str, Any]) -> str:
+    """Replace named query values while preserving every unrelated parameter."""
+
+    parsed = urlparse(url)
+    replacements = {str(key).casefold(): value for key, value in params.items()}
+    pairs = [
+        (key, value)
+        for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.casefold() not in replacements
+    ]
+    pairs.extend(
+        (str(key), str(value))
+        for key, value in params.items()
+        if value is not None and str(value) != ""
+    )
+    return parsed._replace(query=urlencode(pairs)).geturl()
 
 
 def query_value(url: str, name: str) -> str:
@@ -6747,6 +6775,487 @@ def parse_learning_courses(html: str) -> list[dict[str, Any]]:
         if course["course_id"] and course["clazz_id"] and course["entry_url"]:
             courses.append(course)
     return courses
+
+
+def parse_learning_ai_tools(html: str) -> list[dict[str, Any]]:
+    """Parse the tools offered by the learner AI-workbench page."""
+
+    tools: list[dict[str, Any]] = []
+    candidates: list[tuple[dict[str, str], str]] = []
+    for match in re.finditer(
+        r"<li\b(?P<attrs>[^>]*)>(?P<body>.*?)</li>",
+        str(html or ""),
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        attrs = html_attrs(match.group("attrs"))
+        candidates.append((attrs, match.group("body")))
+    for match in re.finditer(r"<input\b[^>]*>", str(html or ""), flags=re.I | re.S):
+        attrs = html_attrs(match.group(0))
+        candidates.append((attrs, ""))
+
+    seen: set[tuple[str, str]] = set()
+    for attrs, body in candidates:
+        raw_url = str(attrs.get("hrefstr") or "").strip()
+        if not raw_url:
+            continue
+        name_match = re.search(
+            r"<span\b[^>]*class=['\"][^'\"]*workName[^'\"]*['\"][^>]*>"
+            r"(.*?)</span>",
+            body,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        name = (
+            html_text(name_match.group(1))
+            if name_match
+            else str(attrs.get("agentname") or attrs.get("title") or "").strip()
+        )
+        if not name:
+            continue
+        tool_id = str(attrs.get("iframeid") or "").strip()
+        key = (tool_id, raw_url)
+        if key in seen:
+            continue
+        seen.add(key)
+        parsed = urlparse(raw_url)
+        tools.append(
+            {
+                "index": len(tools) + 1,
+                "tool_id": tool_id,
+                "name": name,
+                "host": parsed.netloc,
+                "entry_url": redact_url_query_values(raw_url, LEARNING_SECRET_QUERY_NAMES),
+            }
+        )
+    return tools
+
+
+def parse_learning_chapters(html: str) -> dict[str, list[dict[str, Any]]]:
+    """Parse learner-visible chapter units and their directly selectable chapters."""
+
+    source = str(html or "")
+    unit_starts: list[int] = []
+    for match in re.finditer(r"<div\b[^>]*>", source, flags=re.I | re.S):
+        attrs = html_attrs(match.group(0))
+        if "chapter_unit" in attrs.get("class", "").split():
+            unit_starts.append(match.start())
+
+    units: list[dict[str, Any]] = []
+    flat: list[dict[str, Any]] = []
+    for unit_position, start in enumerate(unit_starts, 1):
+        end = unit_starts[unit_position] if unit_position < len(unit_starts) else len(source)
+        block = source[start:end]
+        child_starts: list[tuple[int, dict[str, str]]] = []
+        for match in re.finditer(r"<div\b[^>]*>", block, flags=re.I | re.S):
+            attrs = html_attrs(match.group(0))
+            if "chapter_item" in attrs.get("class", "").split() and attrs.get("id", "").startswith(
+                "cur"
+            ):
+                child_starts.append((match.start(), attrs))
+
+        parent = block[: child_starts[0][0]] if child_starts else block
+        number_match = re.search(r"<em\b[^>]*>(.*?)</em>", parent, flags=re.I | re.S)
+        unit_number = html_text(number_match.group(1)) if number_match else str(unit_position)
+        unit_title = ""
+        for span_match in re.finditer(r"<span\b[^>]*>.*?</span>", parent, flags=re.I | re.S):
+            attrs = html_attrs(span_match.group(0))
+            if attrs.get("title"):
+                unit_title = str(attrs["title"]).strip()
+                break
+        if not unit_title:
+            title_match = re.search(
+                r"<a\b[^>]*class=['\"][^'\"]*clicktitle[^'\"]*['\"][^>]*>"
+                r"(.*?)</a>",
+                parent,
+                flags=re.I | re.S,
+            )
+            unit_title = html_text(title_match.group(1)) if title_match else ""
+
+        children: list[dict[str, Any]] = []
+        for child_position, (child_start, attrs) in enumerate(child_starts, 1):
+            child_end = (
+                child_starts[child_position][0]
+                if child_position < len(child_starts)
+                else len(block)
+            )
+            fragment = block[child_start:child_end]
+            sequence_match = re.search(
+                r"<span\b[^>]*class=['\"][^'\"]*catalog_sbar[^'\"]*['\"][^>]*>"
+                r"(.*?)</span>",
+                fragment,
+                flags=re.I | re.S,
+            )
+            pending_count = 0
+            for input_match in re.finditer(r"<input\b[^>]*>", fragment, flags=re.I | re.S):
+                input_attrs = html_attrs(input_match.group(0))
+                if "knowledgeJobCount" not in input_attrs.get("class", "").split():
+                    continue
+                raw_count = str(input_attrs.get("value") or "").strip()
+                pending_count = int(raw_count) if raw_count.isdigit() else 0
+                break
+            status_match = re.search(
+                r"<span\b[^>]*class=['\"][^'\"]*bntHoverTips[^'\"]*['\"][^>]*>"
+                r"(.*?)</span>",
+                fragment,
+                flags=re.I | re.S,
+            )
+            chapter = {
+                "index": len(flat) + 1,
+                "chapter_id": attrs.get("id", "")[3:],
+                "number": html_text(sequence_match.group(1)) if sequence_match else "",
+                "title": str(attrs.get("title") or "").strip(),
+                "unit_number": unit_number,
+                "unit_title": unit_title,
+                "pending_task_count": pending_count,
+                "task_status": html_text(status_match.group(1)) if status_match else "",
+            }
+            children.append(chapter)
+            flat.append(chapter)
+        units.append(
+            {
+                "index": unit_position,
+                "number": unit_number,
+                "title": unit_title,
+                "chapter_count": len(children),
+                "pending_task_count": sum(item["pending_task_count"] for item in children),
+                "chapters": children,
+            }
+        )
+    return {"units": units, "chapters": flat}
+
+
+def _learning_entry_status_key(status: str) -> str:
+    normalized = re.sub(r"\s+", "", str(status or ""))
+    for marker, key in (
+        ("未交", "unsubmitted"),
+        ("待提交", "unsubmitted"),
+        ("已交", "submitted"),
+        ("待批阅", "submitted"),
+        ("已完成", "completed"),
+        ("未开始", "not_started"),
+        ("进行中", "ongoing"),
+        ("已结束", "ended"),
+        ("已过期", "expired"),
+    ):
+        if marker in normalized:
+            return key
+    return "unknown"
+
+
+def parse_learning_task_entries(html: str) -> list[dict[str, Any]]:
+    """Parse student homework, exam, or self-test list entries without opening them."""
+
+    entries: list[dict[str, Any]] = []
+    for match in re.finditer(
+        r"<li\b(?P<attrs>[^>]*)>(?P<body>.*?)</li>",
+        str(html or ""),
+        flags=re.I | re.S,
+    ):
+        attrs = html_attrs(match.group("attrs"))
+        if "gotask" not in str(attrs.get("onclick") or "").casefold():
+            continue
+        raw_url = str(attrs.get("data") or attrs.get("href") or "").strip()
+        if not raw_url:
+            continue
+        body = match.group("body")
+        title_match = re.search(
+            r"<p\b[^>]*class=['\"][^'\"]*overHidden2[^'\"]*['\"][^>]*>"
+            r"(.*?)</p>",
+            body,
+            flags=re.I | re.S,
+        )
+        status_match = re.search(
+            r"<p\b[^>]*class=['\"][^'\"]*status[^'\"]*['\"][^>]*>"
+            r"(.*?)</p>",
+            body,
+            flags=re.I | re.S,
+        )
+        aria_parts = [part.strip() for part in str(attrs.get("aria-label") or "").split(";")]
+        title = (
+            html_text(title_match.group(1))
+            if title_match
+            else (aria_parts[0] if aria_parts else "")
+        )
+        status = (
+            html_text(status_match.group(1))
+            if status_match
+            else (aria_parts[1] if len(aria_parts) > 1 else "")
+        )
+        query = {
+            key.casefold(): values[0] for key, values in parse_qs(urlparse(raw_url).query).items()
+        }
+        entries.append(
+            {
+                "index": len(entries) + 1,
+                "title": title,
+                "status": status,
+                "status_key": _learning_entry_status_key(status),
+                "work_id": query.get("workid", ""),
+                "answer_id": query.get("answerid", ""),
+                "exam_id": query.get("examid", ""),
+                "test_paper_id": query.get("testpaperid", ""),
+                "test_user_relation_id": query.get("testuserrelationid", ""),
+                "task_id": query.get("taskid", ""),
+                "entry_url": redact_url_query_values(raw_url, LEARNING_SECRET_QUERY_NAMES),
+            }
+        )
+    return entries
+
+
+def parse_learning_materials(html: str) -> list[dict[str, Any]]:
+    """Parse one learner course-material folder page."""
+
+    source = str(html or "")
+    starts: list[tuple[int, dict[str, str]]] = []
+    for match in re.finditer(r"<ul\b[^>]*>", source, flags=re.I | re.S):
+        attrs = html_attrs(match.group(0))
+        if "dataBody_td" in attrs.get("class", "").split():
+            starts.append((match.start(), attrs))
+    items: list[dict[str, Any]] = []
+    for position, (start, attrs) in enumerate(starts):
+        end = starts[position + 1][0] if position + 1 < len(starts) else len(source)
+        fragment = source[start:end]
+        size_match = re.search(
+            r"<li\b[^>]*class=['\"][^'\"]*dataBody_size_stu[^'\"]*['\"][^>]*>"
+            r"(.*?)</li>",
+            fragment,
+            flags=re.I | re.S,
+        )
+        creator_match = re.search(
+            r"<li\b[^>]*class=['\"][^'\"]*dataBody_creater_stu[^'\"]*['\"][^>]*>"
+            r"(.*?)</li>",
+            fragment,
+            flags=re.I | re.S,
+        )
+        item_type = str(attrs.get("type") or "").strip().lower()
+        raw_target_url = str(attrs.get("url") or attrs.get("loadurl") or "").strip()
+        items.append(
+            {
+                "index": len(items) + 1,
+                "data_id": str(attrs.get("id") or "").strip(),
+                "name": str(attrs.get("dataname") or "").strip(),
+                "item_type": item_type,
+                "is_folder": item_type == "afolder",
+                "downloadable": str(attrs.get("isdown") or "").strip() == "1",
+                "open_state": str(attrs.get("isopen") or "").strip(),
+                "object_id": str(attrs.get("objectid") or "").strip(),
+                "source": str(attrs.get("source") or "").strip(),
+                "order": str(attrs.get("order") or "").strip(),
+                "size": html_text(size_match.group(1)) if size_match else "",
+                "creator": html_text(creator_match.group(1)) if creator_match else "",
+                "target_url": redact_url_query_values(raw_target_url, LEARNING_SECRET_QUERY_NAMES)
+                if raw_target_url
+                else "",
+            }
+        )
+    return items
+
+
+def resolve_learning_material(
+    items: list[dict[str, Any]], query: str, *, folders_only: bool = False
+) -> dict[str, Any]:
+    normalized = str(query or "").strip().casefold()
+    if not normalized:
+        raise ChaoxingAPIError("learning material name, data_id, or index is required")
+    candidates = [item for item in items if not folders_only or item.get("is_folder")]
+    exact = [
+        item
+        for item in candidates
+        if normalized
+        in {
+            str(item.get("index") or ""),
+            str(item.get("data_id") or "").casefold(),
+            str(item.get("name") or "").strip().casefold(),
+        }
+    ]
+    if len(exact) == 1:
+        return exact[0]
+    partial = [item for item in candidates if normalized in str(item.get("name") or "").casefold()]
+    if len(partial) == 1:
+        return partial[0]
+    if not partial:
+        noun = "folder" if folders_only else "material"
+        raise ChaoxingAPIError(f"learning {noun} not found: {query}")
+    options = ", ".join(
+        f"{item['index']}. {item['name']} ({item['data_id']})" for item in partial[:20]
+    )
+    raise ChaoxingAPIError(f"multiple learning materials match: {options}")
+
+
+def parse_learning_wrong_question_summary(html: str) -> dict[str, Any]:
+    hidden = parse_hidden_inputs(str(html or ""))
+
+    def integer(name: str, default: int = 0) -> int:
+        try:
+            return int(str(hidden.get(name) or default))
+        except ValueError:
+            return default
+
+    group_count = integer("groupCount")
+    topic_ids = [value for value in str(hidden.get("topicArr") or "").split(",") if value]
+    return {
+        "group_count": group_count,
+        "has_wrong_questions": group_count > 0,
+        "last_exam_id": str(hidden.get("lastExamId") or ""),
+        "self_test_available": str(hidden.get("showSelfTest") or "") == "1",
+        "selected_question_type": str(hidden.get("queType") or ""),
+        "selected_topic_ids": topic_ids,
+    }
+
+
+def normalize_learning_activity(raw: dict[str, Any], *, source: str) -> dict[str, Any]:
+    status = ChaoxingAPI._ai_workbench_integer(raw.get("status"), -1)
+    extra = raw.get("extraInfo") if isinstance(raw.get("extraInfo"), dict) else {}
+    safe_extra = {
+        key: extra[key]
+        for key in ("topicId", "groupId", "workId", "chapterId", "taskId")
+        if key in extra
+    }
+    return {
+        "activity_id": str(raw.get("id") or raw.get("activeId") or raw.get("taskId") or ""),
+        "name": str(
+            raw.get("nameOne")
+            or raw.get("typeTitle")
+            or raw.get("title")
+            or raw.get("taskName")
+            or raw.get("name")
+            or ""
+        ).strip(),
+        "subtitle": str(raw.get("nameTwo") or raw.get("description") or "").strip(),
+        "display_time": str(raw.get("nameFour") or "").strip(),
+        "activity_type": ChaoxingAPI._ai_workbench_integer(
+            raw.get("activeType", raw.get("type")), -1
+        ),
+        "status": status,
+        "status_label": ChaoxingAPI._class_activity_status_label(status),
+        "user_status": ChaoxingAPI._ai_workbench_integer(raw.get("userStatus"), -1),
+        "start_time": raw.get("startTime"),
+        "end_time": raw.get("endTime"),
+        "release_count": ChaoxingAPI._ai_workbench_integer(raw.get("releaseNum"), 0),
+        "attendance_count": ChaoxingAPI._ai_workbench_integer(raw.get("attendNum"), 0),
+        "viewed": str(raw.get("isLook") or "0").strip().lower() in {"1", "true"},
+        "source": source,
+        "metadata": safe_extra,
+    }
+
+
+def normalize_learning_record_sections(
+    payloads: dict[str, dict[str, Any]],
+    page_values: dict[str, str],
+) -> dict[str, Any]:
+    """Reduce learning-record APIs to study metrics and omit identity/bootstrap secrets."""
+
+    def section(name: str) -> dict[str, Any]:
+        payload = payloads.get(name)
+        if not isinstance(payload, dict):
+            return {}
+        data = payload.get("data")
+        return data if isinstance(data, dict) else payload
+
+    def integer(value: Any) -> int:
+        try:
+            return int(str(value or "0"))
+        except (TypeError, ValueError):
+            return 0
+
+    job = section("job")
+    work = section("work")
+    tests = section("test")
+    group_task = section("group_task")
+    video_test = section("video_test")
+    score_data = section("score")
+    score = score_data.get("score") if isinstance(score_data.get("score"), dict) else {}
+    self_exam = section("self_exam")
+    week = section("week")
+    sign = section("attendance")
+    points = section("points")
+    live = section("live")
+    cxclass = section("cxclass")
+    component_scores = score_data.get("weightList")
+    if not isinstance(component_scores, list):
+        component_scores = []
+
+    return {
+        "chapter_tasks": {
+            "completed": job.get("job"),
+            "published": job.get("publishJobNum"),
+            "completion_percent": job.get("jobPer"),
+            "class_rank": job.get("jobRank"),
+            "slow_progress": bool(job.get("isSlowJob")),
+        },
+        "homework": {
+            "completed": work.get("finishCount"),
+            "assigned": work.get("receivedNum"),
+            "completion_percent": work.get("finishPer"),
+            "score": work.get("workScore"),
+        },
+        "chapter_quizzes": {
+            "completed": tests.get("testNum"),
+            "assigned": tests.get("receivedNum"),
+            "completion_percent": tests.get("finishPer"),
+            "average_score": tests.get("testAvgScore"),
+            "question_task_count": tests.get("jobCount"),
+        },
+        "course_exams": {
+            "completed": integer(page_values.get("examFinishNum")),
+            "assigned": integer(page_values.get("examPublishNum")),
+        },
+        "group_tasks": {
+            "completed": group_task.get("taskNum"),
+            "assigned": group_task.get("publishTaskNum"),
+            "completion_percent": group_task.get("taskPer"),
+            "score": group_task.get("taskScore"),
+        },
+        "video_quizzes": {
+            "completed": video_test.get("finishCount"),
+            "assigned": video_test.get("count"),
+            "completion_percent": video_test.get("finishPer"),
+            "questions_completed": video_test.get("finishQuestionCount"),
+            "question_count": video_test.get("questionCount"),
+        },
+        "self_tests": {
+            "attempt_count": self_exam.get("examCount"),
+            "question_count": self_exam.get("quesCount"),
+            "objective_question_count": self_exam.get("objQuesCount"),
+            "objective_correct_count": self_exam.get("objRightCount"),
+            "objective_correct_percent": self_exam.get("objRightPercent"),
+        },
+        "score": {
+            "visible": bool(score_data.get("showScore")),
+            "overall": score.get("score"),
+            "component_scores": [
+                {"name": str(item.get("name") or ""), "value": item.get("value")}
+                for item in component_scores
+                if isinstance(item, dict)
+            ],
+        },
+        "weekly_activity": {
+            "dates": week.get("dates") if isinstance(week.get("dates"), list) else [],
+            "counts": week.get("counts") if isinstance(week.get("counts"), list) else [],
+        },
+        "attendance": {
+            key: sign.get(key)
+            for key in (
+                "allCount",
+                "attendanceCount",
+                "realAbsenceCount",
+                "absenceCount",
+                "overdueCount",
+                "earlyCount",
+                "lateCount",
+                "sickCount",
+                "personnalCount",
+                "publicCount",
+                "signPer",
+            )
+        },
+        "points": points.get("ponits"),
+        "live": {
+            "live_minutes": live.get("livingTime"),
+            "replay_minutes": live.get("playbackTime"),
+            "chaoxing_class_live_minutes": cxclass.get("liveTime"),
+            "chaoxing_class_replay_minutes": cxclass.get("lookBackTime"),
+        },
+    }
 
 
 def resolve_learning_course(courses: list[dict[str, Any]], query: str) -> dict[str, Any]:
@@ -19415,7 +19924,7 @@ class ChaoxingAPI:
             "verification": "authenticated student-role course HTML parsed through HTTP",
         }
 
-    def inspect_learning_course_module(
+    def _learning_module_response(
         self,
         course: dict[str, Any],
         module_query: str,
@@ -19437,6 +19946,27 @@ class ChaoxingAPI:
         if "passport2.chaoxing.com/login" in response.url.lower():
             raise ChaoxingAPIError("learning-course module was redirected to login")
         html = self._decode(response)
+        if "passport2.chaoxing.com/login" in html.lower():
+            raise ChaoxingAPIError("learning-course module response was a login page")
+        return {
+            "session": session,
+            "course_context": context,
+            "module": item,
+            "request_url": module_url,
+            "response": response,
+            "html": html,
+        }
+
+    def inspect_learning_course_module(
+        self,
+        course: dict[str, Any],
+        module_query: str,
+    ) -> dict[str, Any]:
+        module = self._learning_module_response(course, module_query)
+        item = module["module"]
+        module_url = str(module["request_url"])
+        response = module["response"]
+        html = str(module["html"])
         title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
         return {
             "course_id": course["course_id"],
@@ -19454,6 +19984,546 @@ class ChaoxingAPI:
             "title": html_text(title_match.group(1)) if title_match else "",
             "text_excerpt": html_text(html, limit=20_000),
             "verification": "authenticated student-role module response retrieved through HTTP",
+        }
+
+    @staticmethod
+    def _learning_course_result(course: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "course_id": str(course.get("course_id") or ""),
+            "course_name": str(course.get("course_name") or ""),
+            "clazz_id": str(course.get("clazz_id") or ""),
+        }
+
+    @staticmethod
+    def _learning_json_response(
+        response: requests.Response,
+        operation: str,
+    ) -> dict[str, Any]:
+        if "passport2.chaoxing.com/login" in response.url.lower():
+            raise ChaoxingAPIError(f"{operation} was redirected to login")
+        try:
+            payload = json.loads(ChaoxingAPI._decode(response))
+        except json.JSONDecodeError as exc:
+            raise ChaoxingAPIError(f"{operation} returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise ChaoxingAPIError(f"{operation} returned invalid JSON")
+        return payload
+
+    def list_learning_activities(
+        self,
+        course: dict[str, Any],
+        *,
+        search: str = "",
+        status: str = "all",
+    ) -> dict[str, Any]:
+        module = self._learning_module_response(course, "任务")
+        session = module["session"]
+        page_values = parse_page_values(
+            str(module["html"]),
+            ("fid", "courseId", "classId", "showNotStartedActive"),
+        )
+        course_id = page_values["courseId"] or str(course["course_id"])
+        clazz_id = page_values["classId"] or str(course["clazz_id"])
+        common = {
+            "fid": page_values["fid"],
+            "courseId": course_id,
+            "classId": clazz_id,
+            "showNotStartedActive": page_values["showNotStartedActive"],
+        }
+
+        def get_json(url: str, operation: str, params: dict[str, Any]) -> dict[str, Any]:
+            try:
+                response = session.get(
+                    url,
+                    params=params,
+                    timeout=max(self.timeout, 60),
+                    allow_redirects=True,
+                    headers={
+                        "Referer": str(module["response"].url),
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                )
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                raise ChaoxingAPIError(f"{operation} request failed") from exc
+            return self._learning_json_response(response, operation)
+
+        payload = get_json(
+            MOBILELEARN_BASE_URL + "/v2/apis/active/student/activelist",
+            "learner activity list",
+            common,
+        )
+        if str(payload.get("result") or "") not in {"1", "true", "True"}:
+            raise ChaoxingAPIError(
+                str(payload.get("errorMsg") or "failed to list learner activities")
+            )
+        data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
+        activities = [
+            normalize_learning_activity(raw, source="class_activity")
+            for raw in data.get("activeList") or []
+            if isinstance(raw, dict)
+        ]
+        unavailable_sources: list[str] = []
+
+        try:
+            task_payload = get_json(
+                MOBILELEARN_BASE_URL + "/v2/apis/active/getData",
+                "learner study-plan task list",
+                {"DB_STRATEGY": "DEFAULT", "courseId": course_id, "classId": clazz_id},
+            )
+            task_data = task_payload.get("data")
+            if str(task_payload.get("result") or "") in {"1", "true", "True"} and isinstance(
+                task_data, list
+            ):
+                activities.extend(
+                    normalize_learning_activity(raw, source="study_plan")
+                    for raw in task_data
+                    if isinstance(raw, dict)
+                )
+            elif task_payload.get("result") not in (None, 1, True, "1", "true"):
+                unavailable_sources.append("study_plan")
+        except ChaoxingAPIError:
+            unavailable_sources.append("study_plan")
+
+        try:
+            ai_payload = get_json(
+                MOOC2_BASE_URL + "/mooc2-ans/ai-evaluate/v2/answer/activities",
+                "learner AI-practice list",
+                {"courseid": course_id, "clazzid": clazz_id},
+            )
+            ai_data = ai_payload.get("data")
+            if ai_payload.get("status") is True and isinstance(ai_data, list):
+                activities.extend(
+                    normalize_learning_activity(raw, source="ai_practice")
+                    for raw in ai_data
+                    if isinstance(raw, dict)
+                )
+            elif ai_payload.get("status") is not True:
+                unavailable_sources.append("ai_practice")
+        except ChaoxingAPIError:
+            unavailable_sources.append("ai_practice")
+
+        normalized_status = str(status or "all").strip().casefold().replace("-", "_")
+        allowed_statuses = {"all", "not_started", "ongoing", "ended"}
+        if normalized_status not in allowed_statuses:
+            raise ChaoxingAPIError(
+                "learner activity status must be all, not_started, ongoing, or ended"
+            )
+        normalized_search = str(search or "").strip().casefold()
+        if normalized_search:
+            activities = [
+                item
+                for item in activities
+                if normalized_search in str(item.get("name") or "").casefold()
+                or normalized_search in str(item.get("subtitle") or "").casefold()
+            ]
+        if normalized_status != "all":
+            activities = [
+                item for item in activities if item.get("status_label") == normalized_status
+            ]
+        for index, item in enumerate(activities, 1):
+            item["index"] = index
+        source_counts = Counter(str(item.get("source") or "") for item in activities)
+        return {
+            **self._learning_course_result(course),
+            "search": search,
+            "status": normalized_status,
+            "count": len(activities),
+            "source_counts": dict(source_counts),
+            "unavailable_sources": sorted(set(unavailable_sources)),
+            "activities": activities,
+            "verification": "learner activity APIs read without entering or starting an activity",
+        }
+
+    def list_learning_chapters(
+        self,
+        course: dict[str, Any],
+        *,
+        search: str = "",
+    ) -> dict[str, Any]:
+        module = self._learning_module_response(course, "章节")
+        parsed = parse_learning_chapters(str(module["html"]))
+        chapters = parsed["chapters"]
+        units = parsed["units"]
+        normalized_search = str(search or "").strip().casefold()
+        if normalized_search:
+            chapters = [
+                item
+                for item in chapters
+                if normalized_search in str(item.get("title") or "").casefold()
+                or normalized_search in str(item.get("number") or "").casefold()
+                or normalized_search in str(item.get("unit_title") or "").casefold()
+            ]
+            matched_ids = {item["chapter_id"] for item in chapters}
+            units = [
+                {
+                    **unit,
+                    "chapters": [
+                        item for item in unit["chapters"] if item["chapter_id"] in matched_ids
+                    ],
+                }
+                for unit in units
+                if any(item["chapter_id"] in matched_ids for item in unit["chapters"])
+            ]
+        return {
+            **self._learning_course_result(course),
+            "search": search,
+            "unit_count": len(units),
+            "chapter_count": len(chapters),
+            "pending_task_count": sum(item["pending_task_count"] for item in chapters),
+            "units": units,
+            "chapters": chapters,
+            "verification": "learner chapter hierarchy parsed without opening a chapter",
+        }
+
+    def _list_learning_task_entries(
+        self,
+        course: dict[str, Any],
+        module_name: str,
+        result_key: str,
+        *,
+        search: str = "",
+        status: str = "",
+    ) -> dict[str, Any]:
+        module = self._learning_module_response(course, module_name)
+        html = str(module["html"])
+        entries = parse_learning_task_entries(html)
+        normalized_search = str(search or "").strip().casefold()
+        normalized_status = str(status or "").strip().casefold().replace("-", "_")
+        if normalized_search:
+            entries = [item for item in entries if normalized_search in item["title"].casefold()]
+        if normalized_status and normalized_status != "all":
+            entries = [
+                item
+                for item in entries
+                if normalized_status in {item["status_key"], item["status"].casefold()}
+            ]
+        for index, item in enumerate(entries, 1):
+            item["index"] = index
+        empty_match = re.search(
+            r"<div\b[^>]*class=['\"][^'\"]*null-data[^'\"]*['\"][^>]*>"
+            r"(.*?)</div>",
+            html,
+            flags=re.I | re.S,
+        )
+        return {
+            **self._learning_course_result(course),
+            "search": search,
+            "status": normalized_status or "all",
+            "count": len(entries),
+            "empty_message": html_text(empty_match.group(1)) if empty_match else "",
+            result_key: entries,
+            "verification": f"learner {result_key} list parsed without opening an item",
+        }
+
+    def list_learning_homeworks(
+        self,
+        course: dict[str, Any],
+        *,
+        search: str = "",
+        status: str = "",
+    ) -> dict[str, Any]:
+        return self._list_learning_task_entries(
+            course,
+            "作业",
+            "homeworks",
+            search=search,
+            status=status,
+        )
+
+    def list_learning_exams(
+        self,
+        course: dict[str, Any],
+        *,
+        search: str = "",
+        status: str = "",
+    ) -> dict[str, Any]:
+        return self._list_learning_task_entries(
+            course,
+            "考试",
+            "exams",
+            search=search,
+            status=status,
+        )
+
+    def list_learning_self_tests(
+        self,
+        course: dict[str, Any],
+        *,
+        search: str = "",
+        status: str = "",
+    ) -> dict[str, Any]:
+        return self._list_learning_task_entries(
+            course,
+            "自测",
+            "self_tests",
+            search=search,
+            status=status,
+        )
+
+    def list_learning_materials(
+        self,
+        course: dict[str, Any],
+        *,
+        folder: str = "",
+        search: str = "",
+    ) -> dict[str, Any]:
+        module = self._learning_module_response(course, "资料")
+        session = module["session"]
+        html = str(module["html"])
+        selected_folder: dict[str, Any] | None = None
+        if str(folder or "").strip():
+            selected_folder = resolve_learning_material(
+                parse_learning_materials(html), folder, folders_only=True
+            )
+            hidden = parse_hidden_inputs(html)
+            folder_url = replace_query_params(
+                str(module["request_url"]),
+                {
+                    "courseid": str(course["course_id"]),
+                    "clazzid": str(course["clazz_id"]),
+                    "cpi": str(course.get("cpi") or ""),
+                    "dataName": selected_folder["name"],
+                    "dataId": selected_folder["data_id"],
+                    "type": "1",
+                    "parent": str(hidden.get("parent") or ""),
+                    "flag": "0",
+                },
+            )
+            try:
+                response = session.get(
+                    folder_url,
+                    timeout=max(self.timeout, 60),
+                    allow_redirects=True,
+                    headers={"Referer": str(module["response"].url)},
+                )
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                raise ChaoxingAPIError("learner material folder request failed") from exc
+            if "passport2.chaoxing.com/login" in response.url.lower():
+                raise ChaoxingAPIError("learner material folder was redirected to login")
+            html = self._decode(response)
+
+        items = parse_learning_materials(html)
+        normalized_search = str(search or "").strip().casefold()
+        if normalized_search:
+            items = [
+                item
+                for item in items
+                if normalized_search in str(item.get("name") or "").casefold()
+                or normalized_search in str(item.get("creator") or "").casefold()
+            ]
+        for index, item in enumerate(items, 1):
+            item["index"] = index
+        return {
+            **self._learning_course_result(course),
+            "folder": selected_folder,
+            "search": search,
+            "count": len(items),
+            "folder_count": sum(1 for item in items if item["is_folder"]),
+            "file_count": sum(1 for item in items if not item["is_folder"]),
+            "items": items,
+            "verification": (
+                "learner material folder parsed without previewing or downloading files"
+            ),
+        }
+
+    def list_learning_ai_tools(self, course: dict[str, Any]) -> dict[str, Any]:
+        module = self._learning_module_response(course, "AI助教")
+        tools = parse_learning_ai_tools(str(module["html"]))
+        return {
+            **self._learning_course_result(course),
+            "count": len(tools),
+            "tools": tools,
+            "verification": "learner AI-workbench tool entries parsed without launching a tool",
+        }
+
+    def read_learning_wrong_questions(self, course: dict[str, Any]) -> dict[str, Any]:
+        module = self._learning_module_response(course, "错题集")
+        return {
+            **self._learning_course_result(course),
+            "summary": parse_learning_wrong_question_summary(str(module["html"])),
+            "verification": "learner wrong-question bootstrap state parsed through HTTP",
+        }
+
+    def read_learning_records(self, course: dict[str, Any]) -> dict[str, Any]:
+        module = self._learning_module_response(course, "学习记录")
+        session = module["session"]
+        html = str(module["html"])
+        hidden = parse_hidden_inputs(html)
+        page_values = parse_page_values(
+            html,
+            (
+                "examFinishNum",
+                "examPublishNum",
+                "showScore",
+                "showSelfExam",
+                "haveLivePlaybackTime",
+                "showCxClass",
+                "semesterName",
+                "mixtureType",
+            ),
+        )
+        context_path = str(hidden.get("contextPath") or "/stat2").rstrip("/")
+        base = f"{urlparse(str(module['response'].url)).scheme}://{urlparse(str(module['response'].url)).netloc}"
+        common = {
+            "clazzid": str(hidden.get("enc-clazzId") or course["clazz_id"]),
+            "courseid": str(hidden.get("enc-courseId") or course["course_id"]),
+            "cpi": str(hidden.get("enc-cpi") or course.get("cpi") or ""),
+            "ut": str(hidden.get("enc-ut") or "s"),
+            "pEnc": str(hidden.get("pEnc") or ""),
+        }
+        requests_to_make: tuple[tuple[str, str, str, dict[str, Any]], ...] = (
+            ("job", "GET", "/study-data/job", {}),
+            ("work", "GET", "/study-data/work", {}),
+            ("test", "GET", "/study-data/test", {}),
+            ("group_task", "GET", "/study-data/groupTask", {}),
+            ("video_test", "GET", "/study-data/videoTest", {}),
+            ("score", "GET", "/study-data/score", {"fromData": page_values["showScore"]}),
+            ("week", "GET", "/study-data/weekPv", {}),
+            ("self_exam", "GET", "/study-data/self-exam", {}),
+            (
+                "attendance",
+                "POST",
+                "/study-data/sign",
+                {
+                    "semesterName": page_values["semesterName"],
+                    "mixtureType": page_values["mixtureType"],
+                },
+            ),
+            ("points", "POST", "/study-data/point", {}),
+            ("live", "POST", "/study-data/live", {}),
+            ("cxclass", "POST", "/study-data/cxclass", {}),
+        )
+        payloads: dict[str, dict[str, Any]] = {}
+        unavailable: list[str] = []
+        for name, method, path, extra in requests_to_make:
+            params = {**common, **extra}
+            try:
+                response = session.request(
+                    method,
+                    base + context_path + path,
+                    params=params if method == "GET" else None,
+                    data=params if method == "POST" else None,
+                    timeout=max(self.timeout, 60),
+                    allow_redirects=True,
+                    headers={
+                        "Referer": str(module["response"].url),
+                        "X-Requested-With": "XMLHttpRequest",
+                    },
+                )
+                response.raise_for_status()
+                payloads[name] = self._learning_json_response(
+                    response, f"learner record section {name}"
+                )
+            except (requests.RequestException, ChaoxingAPIError):
+                unavailable.append(name)
+        if not payloads:
+            raise ChaoxingAPIError("all learner-record metric requests failed")
+        return {
+            **self._learning_course_result(course),
+            "records": normalize_learning_record_sections(payloads, page_values),
+            "available_sections": sorted(payloads),
+            "unavailable_sections": unavailable,
+            "verification": "learner record metrics read from current statistic endpoints",
+        }
+
+    def list_learning_discussions(
+        self,
+        course: dict[str, Any],
+        *,
+        search: str = "",
+        class_only: bool = False,
+    ) -> dict[str, Any]:
+        module = self._learning_module_response(course, "讨论")
+        session = module["session"]
+        context = module["course_context"]
+        values = context.get("values") if isinstance(context.get("values"), dict) else {}
+        bbs_id = str(values.get("bbsid") or "")
+        if not bbs_id:
+            raise ChaoxingAPIError("learner course response did not expose bbsid")
+        endpoint = f"{GROUPWEB_BASE_URL}/course/topic/{bbs_id}/getTopicList"
+        topics: list[dict[str, Any]] = []
+        folders: list[dict[str, Any]] = []
+        permissions: dict[str, Any] = {}
+        last_reply_time = ""
+        last_aux_value = ""
+        page = 1
+        server_search = "" if class_only and search else search
+        while page <= 100:
+            params: dict[str, Any] = {
+                "folder_uuid": "",
+                "page": str(page),
+                "pageSize": "20",
+                "kw": server_search,
+                "courseId": course["course_id"],
+                "isSetTop": "",
+                "selectedStartTime": "",
+                "selectedEndTime": "",
+                "selectedType": "",
+                "learnSilverStartTime": "",
+                "learnSilverEndTime": "",
+                "lastAuxValue": last_aux_value,
+            }
+            if last_reply_time:
+                params["last_reply_time"] = last_reply_time
+            if class_only:
+                params["searchType"] = "4"
+                params["classid"] = course["clazz_id"]
+            try:
+                response = session.post(
+                    endpoint,
+                    params=params,
+                    timeout=max(self.timeout, 60),
+                    allow_redirects=True,
+                    headers={"Referer": str(module["response"].url)},
+                )
+                response.raise_for_status()
+            except requests.RequestException as exc:
+                raise ChaoxingAPIError("learner discussion list request failed") from exc
+            payload = self._learning_json_response(response, "learner discussion list")
+            if not payload.get("status"):
+                raise ChaoxingAPIError(
+                    str(payload.get("msg") or "failed to fetch learner discussions")
+                )
+            page_topics, page_folders = parse_discussion_payload(payload)
+            topics.extend(page_topics)
+            if page == 1:
+                folders = page_folders
+                user_auth = payload.get("userAuth")
+                permissions = user_auth if isinstance(user_auth, dict) else {}
+            poff = payload.get("poff") if isinstance(payload.get("poff"), dict) else {}
+            if bool(poff.get("lastPage")) or not page_topics:
+                break
+            next_reply_time = str(poff.get("lastValue") or "")
+            next_aux = str(poff.get("lastAuxValue") or "")
+            if not next_reply_time or next_reply_time == last_reply_time:
+                break
+            last_reply_time = next_reply_time
+            last_aux_value = next_aux
+            page += 1
+        if class_only and search:
+            normalized_search = str(search).casefold()
+            topics = [
+                topic
+                for topic in topics
+                if normalized_search in str(topic.get("title") or "").casefold()
+                or normalized_search in str(topic.get("content") or "").casefold()
+                or normalized_search in str(topic.get("creator_name") or "").casefold()
+            ]
+        for index, topic in enumerate(topics, 1):
+            topic["index"] = index
+        return {
+            **self._learning_course_result(course),
+            "scope": "selected_class" if class_only else "course_all_classes",
+            "search": search,
+            "bbs_id": bbs_id,
+            "count": len(topics),
+            "folder_count": len(folders),
+            "topics": topics,
+            "folders": folders,
+            "permissions": permissions,
+            "verification": f"parsed {len(topics)} learner discussion topics through HTTP",
         }
 
     @staticmethod

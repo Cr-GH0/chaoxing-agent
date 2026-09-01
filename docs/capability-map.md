@@ -6,12 +6,12 @@
 
 | 状态 | 数量 | 含义 |
 | --- | ---: | --- |
-| `implemented` | 535 | 存在可调用的动作、统一运行时分发和测试 |
-| `live_verified` | 377 | 该动作已在真实平台上执行并检查后置条件 |
+| `implemented` | 545 | 存在可调用的动作、统一运行时分发和测试 |
+| `live_verified` | 387 | 该动作已在真实平台上执行并检查后置条件 |
 | `implemented` 但未标记实测 | 158 | 已实现并有自动测试，但当前账号未安全执行该精确动作 |
 | `observed` surface marker | 43 | 17 个教师课程入口、14 个个人空间入口和 12 个学生课程入口的导航事实 |
 
-`observed` 是入口标记，不等于 43 个未实现功能。例如教师侧“课程图谱”既有一个入口标记，也有 42 个具体语义动作；学生侧入口当前至少可由通用学生课程读取动作访问。
+`observed` 是入口标记，不等于 43 个未实现功能。例如教师侧“课程图谱”既有一个入口标记，也有 42 个具体语义动作；学生侧 12 个入口中已有 10 个对应独立只读语义领域，课程图谱和直播课/见面课仍只有通用入口读取。
 
 能力响应中的 `surface_coverage` 会把每个入口映射到对应语义领域和已实现动作数量；平台当前只提供通用入口读取、没有独立对象操作的页面标记为 `generic_entry_only`。
 
@@ -30,6 +30,16 @@ uv run chaoxing-agent capabilities
 | `courses` | 2 | 教师课程与班级列表 |
 | `course` | 2 | 课程入口发现与读取 |
 | `learning` | 5 | 我学的课、学生课程入口、模块读取与诚信承诺状态 |
+| `learning_activities` | 1 | 学生课程活动、学习计划任务与 AI 练习活动聚合读取 |
+| `learning_chapters` | 1 | 学生章节、编号与待完成任务点读取 |
+| `learning_discussions` | 1 | 学生课程讨论列表与本地关键词筛选 |
+| `learning_homework` | 1 | 学生作业列表与完成状态读取 |
+| `learning_exams` | 1 | 学生考试列表与完成状态读取 |
+| `learning_self_tests` | 1 | 学生自测列表与完成状态读取 |
+| `learning_materials` | 1 | 学生资料根目录与一级文件夹读取 |
+| `learning_ai` | 1 | 学生课程当前开放的 AI 工具读取 |
+| `learning_wrong_questions` | 1 | 学生错题分组与自测可用状态读取 |
+| `learning_records` | 1 | 章节任务、作业、测验、考试、成绩、签到等学习指标读取 |
 | `class_management` | 26 | 班级、学生、申请、教师、权限与日志 |
 | `chapters` | 13 | 章节树、卡片、创建、移动、开放与删除 |
 | `course_assets` | 13 | 课程课件/教案资源、目录、导入、下载与回收站 |
@@ -56,13 +66,13 @@ uv run chaoxing-agent capabilities
 | `job_ability` | 9 | 招聘搜索、详情、热门岗位、职业百科与行业岗位库 |
 | `system` | 3 | 能力目录、命令计划与自然语言执行 |
 
-合计 535 个动作。
+合计 545 个动作。
 
 ## 风险分布
 
 | 风险 | 数量 |
 | --- | ---: |
-| `read` | 187 |
+| `read` | 197 |
 | `navigate` | 1 |
 | `draft` | 54 |
 | `write` | 95 |
@@ -85,7 +95,18 @@ uv run chaoxing-agent capabilities
 
 在当前账号的一门完整学生课程页中观察到 12 个入口：AI助教、任务、章节、讨论、作业、考试、资料、错题集、学习记录、课程图谱、自测、直播课/见面课。不同课程实际开放的入口不同，`learning.course.modules.discover` 每次从所选课程当前页面动态解析，`learning.course.module.open` 按学生页面使用的参数规则构造 HTTP 请求。
 
-其中前 11 个入口已在一门已结束课程上逐个取得 HTTP 200；“直播课/见面课”跳转到 `xueyinonline.chaoxing.com` 后要求额外的 Passport SSO，当前保存会话会被送回登录页。运行时会明确报告该认证边界，不把登录页当作模块内容。
+其中 10 类内容已有独立语义动作：
+
+- `learning.course.activities.list` 聚合课堂活动、学习计划任务和 AI 练习活动，但不打开任务；
+- `learning.course.chapters.list` 读取单元、章节编号、标题和待完成任务点；
+- `learning.course.discussions.list` 读取课程讨论，并在班级范围内安全进行本地关键词筛选；
+- `learning.course.homeworks.list`、`learning.course.exams.list` 和 `learning.course.self_tests.list` 只解析列表页，不进入项目、启动作答、改变计时或提交状态；
+- `learning.course.materials.list` 读取资料根目录或指定的一级文件夹，不预览、下载或增加浏览次数；
+- `learning.course.ai_tools.list`、`learning.course.wrong_questions.summary` 和 `learning.course.records.read` 分别读取可用 AI 工具、错题概况和十二类学习指标，并剔除身份与页面启动令牌。
+
+上述 10 个动作均已通过保存的登录会话直接执行。当前账号实测发现真实课堂活动、66 个章节、讨论话题、作业和资料；考试与自测当前为空，因此空列表行为已经实测，真实考试/自测条目的解析仍缺少当前账号样本。
+
+学生课程图谱目前仍通过通用模块读取；“直播课/见面课”跳转到 `xueyinonline.chaoxing.com` 后要求额外的 Passport SSO，当前保存会话会被送回登录页。运行时会明确报告该认证边界，不把登录页当作模块内容。
 
 在线学习诚信承诺状态由页面的账号级与课程级标志共同判断。页面含有承诺书 HTML 不代表当前必须签署；`learning.course.integrity.read` 返回实际判断。`learning.course.integrity.accept` 会代表当前账号改变平台承诺状态，因此必须经过一次性确认门，当前未执行实测。
 

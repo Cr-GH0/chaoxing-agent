@@ -58,6 +58,46 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
             return {"course": course, "module": module, "title": "章节学习"}
 
         @staticmethod
+        def list_learning_activities(course, **kwargs):
+            return {"course": course, "activities": [], **kwargs}
+
+        @staticmethod
+        def list_learning_chapters(course, **kwargs):
+            return {"course": course, "chapters": [{"title": "第一章"}], **kwargs}
+
+        @staticmethod
+        def list_learning_discussions(course, **kwargs):
+            return {"course": course, "topics": [], **kwargs}
+
+        @staticmethod
+        def list_learning_homeworks(course, **kwargs):
+            return {"course": course, "homeworks": [], **kwargs}
+
+        @staticmethod
+        def list_learning_exams(course, **kwargs):
+            return {"course": course, "exams": [], **kwargs}
+
+        @staticmethod
+        def list_learning_self_tests(course, **kwargs):
+            return {"course": course, "self_tests": [], **kwargs}
+
+        @staticmethod
+        def list_learning_materials(course, **kwargs):
+            return {"course": course, "items": [], **kwargs}
+
+        @staticmethod
+        def list_learning_ai_tools(course):
+            return {"course": course, "tools": [{"name": "写作AI助教"}]}
+
+        @staticmethod
+        def read_learning_wrong_questions(course):
+            return {"course": course, "summary": {"group_count": 0}}
+
+        @staticmethod
+        def read_learning_records(course):
+            return {"course": course, "records": {"points": 0}}
+
+        @staticmethod
         def read_learning_integrity(course):
             return {"course": course, "commitment": {"required": True}}
 
@@ -77,6 +117,33 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
         "learning.course.module.open",
         {"course": "英语文体与写作", "module": "章节"},
     )
+    activities = await runtime.execute(
+        "learning.course.activities.list",
+        {"course": "英语文体与写作", "search": "讨论", "status": "ended"},
+    )
+    chapters = await runtime.execute(
+        "learning.course.chapters.list", {"course": "英语文体与写作", "search": "第一"}
+    )
+    discussions = await runtime.execute(
+        "learning.course.discussions.list",
+        {"course": "英语文体与写作", "class_only": True},
+    )
+    homeworks = await runtime.execute(
+        "learning.course.homeworks.list", {"course": "英语文体与写作"}
+    )
+    exams = await runtime.execute("learning.course.exams.list", {"course": "英语文体与写作"})
+    self_tests = await runtime.execute(
+        "learning.course.self_tests.list", {"course": "英语文体与写作"}
+    )
+    materials = await runtime.execute(
+        "learning.course.materials.list",
+        {"course": "英语文体与写作", "folder": "Week 1"},
+    )
+    ai_tools = await runtime.execute("learning.course.ai_tools.list", {"course": "英语文体与写作"})
+    wrong = await runtime.execute(
+        "learning.course.wrong_questions.summary", {"course": "英语文体与写作"}
+    )
+    records = await runtime.execute("learning.course.records.read", {"course": "英语文体与写作"})
     integrity = await runtime.execute(
         "learning.course.integrity.read", {"course": "英语文体与写作"}
     )
@@ -92,6 +159,16 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
     assert listing["result"]["count"] == 1
     assert modules["result"]["modules"][0]["label"] == "章节"
     assert opened["result"]["title"] == "章节学习"
+    assert activities["result"]["status"] == "ended"
+    assert chapters["result"]["chapters"][0]["title"] == "第一章"
+    assert discussions["result"]["class_only"] is True
+    assert homeworks["result"]["homeworks"] == []
+    assert exams["result"]["exams"] == []
+    assert self_tests["result"]["self_tests"] == []
+    assert materials["result"]["folder"] == "Week 1"
+    assert ai_tools["result"]["tools"][0]["name"] == "写作AI助教"
+    assert wrong["result"]["summary"]["group_count"] == 0
+    assert records["result"]["records"]["points"] == 0
     assert integrity["result"]["commitment"]["required"] is True
     assert preview["status"] == "confirmation_required"
     assert "签署" in preview["confirmation"]["summary"]

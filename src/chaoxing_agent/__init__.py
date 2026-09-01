@@ -3,4 +3,4 @@
 from .models import ActionRisk, CapabilityState
 
 __all__ = ["ActionRisk", "CapabilityState"]
-__version__ = "0.3.0"
+__version__ = "0.4.0"

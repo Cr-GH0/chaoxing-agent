@@ -1425,6 +1425,60 @@ def build_parser() -> argparse.ArgumentParser:
     learning_open.add_argument("course")
     learning_open.add_argument("module")
 
+    learning_activities = sub.add_parser(
+        "learning-activities", help="list learner activities without entering or starting them"
+    )
+    learning_activities.add_argument("course")
+    learning_activities.add_argument("--search", default="")
+    learning_activities.add_argument(
+        "--status", choices=("all", "not_started", "ongoing", "ended"), default="all"
+    )
+
+    learning_chapters = sub.add_parser(
+        "learning-chapters", help="list learner-visible chapters and pending task points"
+    )
+    learning_chapters.add_argument("course")
+    learning_chapters.add_argument("--search", default="")
+
+    learning_discussions = sub.add_parser(
+        "learning-discussions", help="list discussions visible to a learner"
+    )
+    learning_discussions.add_argument("course")
+    learning_discussions.add_argument("--search", default="")
+    learning_discussions.add_argument("--class-only", action="store_true")
+
+    for command, help_text in (
+        ("learning-homeworks", "list learner homework without opening an assignment"),
+        ("learning-exams", "list learner exams without entering or starting an exam"),
+        ("learning-self-tests", "list learner self-tests without creating or starting one"),
+    ):
+        learning_task_parser = sub.add_parser(command, help=help_text)
+        learning_task_parser.add_argument("course")
+        learning_task_parser.add_argument("--search", default="")
+        learning_task_parser.add_argument("--status", default="")
+
+    learning_materials = sub.add_parser(
+        "learning-materials", help="list learner-visible course materials or one folder"
+    )
+    learning_materials.add_argument("course")
+    learning_materials.add_argument("--folder", default="")
+    learning_materials.add_argument("--search", default="")
+
+    learning_ai_tools = sub.add_parser(
+        "learning-ai-tools", help="list tools exposed by a learner AI workbench"
+    )
+    learning_ai_tools.add_argument("course")
+
+    learning_wrong_questions = sub.add_parser(
+        "learning-wrong-questions", help="read a learner course's wrong-question summary"
+    )
+    learning_wrong_questions.add_argument("course")
+
+    learning_records = sub.add_parser(
+        "learning-records", help="read learner progress, score, attendance, and activity metrics"
+    )
+    learning_records.add_argument("course")
+
     learning_integrity = sub.add_parser(
         "learning-integrity", help="read the online-learning integrity commitment status"
     )
@@ -5633,6 +5687,55 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
         return await runtime.execute(
             "learning.course.module.open",
             {"course": args.course, "module": args.module},
+        )
+    if args.command == "learning-activities":
+        return await runtime.execute(
+            "learning.course.activities.list",
+            {"course": args.course, "search": args.search, "status": args.status},
+        )
+    if args.command == "learning-chapters":
+        return await runtime.execute(
+            "learning.course.chapters.list",
+            {"course": args.course, "search": args.search},
+        )
+    if args.command == "learning-discussions":
+        return await runtime.execute(
+            "learning.course.discussions.list",
+            {
+                "course": args.course,
+                "search": args.search,
+                "class_only": args.class_only,
+            },
+        )
+    if args.command in {"learning-homeworks", "learning-exams", "learning-self-tests"}:
+        action = {
+            "learning-homeworks": "learning.course.homeworks.list",
+            "learning-exams": "learning.course.exams.list",
+            "learning-self-tests": "learning.course.self_tests.list",
+        }[args.command]
+        return await runtime.execute(
+            action,
+            {"course": args.course, "search": args.search, "status": args.status},
+        )
+    if args.command == "learning-materials":
+        return await runtime.execute(
+            "learning.course.materials.list",
+            {"course": args.course, "folder": args.folder, "search": args.search},
+        )
+    if args.command == "learning-ai-tools":
+        return await runtime.execute(
+            "learning.course.ai_tools.list",
+            {"course": args.course},
+        )
+    if args.command == "learning-wrong-questions":
+        return await runtime.execute(
+            "learning.course.wrong_questions.summary",
+            {"course": args.course},
+        )
+    if args.command == "learning-records":
+        return await runtime.execute(
+            "learning.course.records.read",
+            {"course": args.course},
         )
     if args.command == "learning-integrity":
         return await runtime.execute(

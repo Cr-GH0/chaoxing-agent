@@ -1267,6 +1267,73 @@ class ActionRuntime:
                 course,
                 self._required(parameters, "module"),
             )
+        if action == "learning.course.activities.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.list_learning_activities(
+                course,
+                search=str(parameters.get("search") or ""),
+                status=str(parameters.get("status") or "all"),
+            )
+        if action == "learning.course.chapters.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.list_learning_chapters(
+                course,
+                search=str(parameters.get("search") or ""),
+            )
+        if action == "learning.course.discussions.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.list_learning_discussions(
+                course,
+                search=str(parameters.get("search") or ""),
+                class_only=self._boolean(parameters.get("class_only", False), "class_only"),
+            )
+        if action == "learning.course.homeworks.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.list_learning_homeworks(
+                course,
+                search=str(parameters.get("search") or ""),
+                status=str(parameters.get("status") or ""),
+            )
+        if action == "learning.course.exams.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.list_learning_exams(
+                course,
+                search=str(parameters.get("search") or ""),
+                status=str(parameters.get("status") or ""),
+            )
+        if action == "learning.course.self_tests.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.list_learning_self_tests(
+                course,
+                search=str(parameters.get("search") or ""),
+                status=str(parameters.get("status") or ""),
+            )
+        if action == "learning.course.materials.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.list_learning_materials(
+                course,
+                folder=str(parameters.get("folder") or ""),
+                search=str(parameters.get("search") or ""),
+            )
+        if action == "learning.course.ai_tools.list":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.list_learning_ai_tools(course)
+        if action == "learning.course.wrong_questions.summary":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.read_learning_wrong_questions(course)
+        if action == "learning.course.records.read":
+            api = self._api()
+            course = api.get_learning_course(self._required(parameters, "course"))
+            return api.read_learning_records(course)
         if action == "learning.course.integrity.read":
             api = self._api()
             course = api.get_learning_course(self._required(parameters, "course"))

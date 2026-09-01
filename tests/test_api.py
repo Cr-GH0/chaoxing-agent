@@ -15,6 +15,8 @@ from chaoxing_agent.api import (
     aes_encrypt_base64,
     content_disposition_filename,
     grade_component_schema,
+    normalize_learning_activity,
+    normalize_learning_record_sections,
     normalize_question_bank_smart_import_paper,
     parse_chapter_cards,
     parse_chapter_editor_tree,
@@ -43,8 +45,13 @@ from chaoxing_agent.api import (
     parse_homework_items,
     parse_homework_library_items,
     parse_homework_question_detail,
+    parse_learning_ai_tools,
+    parse_learning_chapters,
     parse_learning_courses,
+    parse_learning_materials,
     parse_learning_progress_payload,
+    parse_learning_task_entries,
+    parse_learning_wrong_question_summary,
     parse_note_detail_html,
     parse_note_detail_user,
     parse_notice_draft_payload,
@@ -100,6 +107,7 @@ from chaoxing_agent.api import (
     resolve_homework_library_item,
     resolve_homework_question,
     resolve_learning_course,
+    resolve_learning_material,
     resolve_module,
     resolve_notice,
     resolve_notice_draft,
@@ -570,6 +578,194 @@ def test_learning_integrity_missing_flags_are_unknown_not_accepted() -> None:
     assert state["required"] is False
     assert state["accepted"] is None
     assert state["state_known"] is False
+
+
+def test_parse_learner_semantic_pages_without_exposing_session_tokens() -> None:
+    ai_tools = parse_learning_ai_tools(
+        """
+        <ul>
+          <li iframeId="assistant" hrefStr="https://robot.example/tool?enc=secret&amp;x=1">
+            <span class="workName">写作AI助教</span>
+          </li>
+        </ul>
+        <input iframeId="resources" agentName="资料助手"
+               hrefStr="https://resource.example/search?token=secret">
+        """
+    )
+    assert [item["name"] for item in ai_tools] == ["写作AI助教", "资料助手"]
+    assert "secret" not in str(ai_tools)
+    assert "%5Bredacted%5D" in ai_tools[0]["entry_url"]
+
+    chapters = parse_learning_chapters(
+        """
+        <div class="chapter_unit">
+          <div class="chapter_item">
+            <div class="catalog_num fl"><em>1</em></div>
+            <div class="catalog_name"><span title="Essay Writing">Essay Writing</span></div>
+          </div>
+          <div class="chapter_item" id="cur101" title="Learning Guide">
+            <span class="catalog_sbar">1.1</span>
+            <input type="hidden" class="knowledgeJobCount" value="2">
+            <span class="bntHoverTips">2个待完成任务点</span>
+          </div>
+          <div class="chapter_item" id="cur102" title="The Writing Process">
+            <span class="catalog_sbar">1.2</span>
+            <input value="0" class="knowledgeJobCount" type="hidden">
+          </div>
+        </div>
+        """
+    )
+    assert chapters["units"][0]["title"] == "Essay Writing"
+    assert chapters["units"][0]["pending_task_count"] == 2
+    assert chapters["chapters"][1]["chapter_id"] == "102"
+
+    tasks = parse_learning_task_entries(
+        """
+        <ul><li onclick="goTask(this);"
+          data="https://mooc1.example/task?workId=88&amp;answerId=0&amp;enc=secret"
+          aria-label="写作调查 ; 未交">
+          <p class="overHidden2 fl">写作调查</p><p class="status fl">未交</p>
+        </li></ul>
+        """
+    )
+    assert tasks[0]["work_id"] == "88"
+    assert tasks[0]["status_key"] == "unsubmitted"
+    assert "secret" not in str(tasks)
+
+
+def test_parse_learning_materials_wrong_questions_activities_and_records() -> None:
+    materials = parse_learning_materials(
+        """
+        <ul class="dataBody_td" id="10" dataName="Week 1" type="afolder"
+            isdown="1" isOpen="0" source="1" order="10">
+          <li class="dataBody_size_stu">-</li>
+          <li class="dataBody_creater_stu"><span>教师甲</span></li>
+        </ul>
+        <ul class="dataBody_td" id="11" dataName="Guide.pdf" type="pdf"
+            isdown="0" isOpen="1" objectId="object-1"
+            url="https://example.test/view?pEnc=secret">
+          <li class="dataBody_size_stu">2 MB</li>
+          <li class="dataBody_creater_stu">教师乙</li>
+        </ul>
+        """
+    )
+    assert materials[0]["is_folder"] is True
+    assert materials[1]["size"] == "2 MB"
+    assert resolve_learning_material(materials, "Week 1", folders_only=True)["data_id"] == "10"
+    assert "secret" not in str(materials)
+
+    wrong = parse_learning_wrong_question_summary(
+        """
+        <input type="hidden" id="groupCount" value="3">
+        <input type="hidden" id="lastExamId" value="42">
+        <input type="hidden" id="showSelfTest" value="1">
+        <input type="hidden" id="queType" value="-1">
+        <input type="hidden" id="topicArr" value="7,8">
+        """
+    )
+    assert wrong["has_wrong_questions"] is True
+    assert wrong["selected_topic_ids"] == ["7", "8"]
+
+    activity = normalize_learning_activity(
+        {
+            "id": 5001,
+            "nameOne": "课堂讨论",
+            "activeType": 5,
+            "status": 2,
+            "userStatus": 1,
+            "extraInfo": {"topicId": "99", "token": "secret"},
+        },
+        source="class_activity",
+    )
+    assert activity["name"] == "课堂讨论"
+    assert activity["status_label"] == "ended"
+    assert activity["metadata"] == {"topicId": "99"}
+
+    records = normalize_learning_record_sections(
+        {
+            "job": {"data": {"job": 2, "publishJobNum": 4, "jobPer": 50}},
+            "work": {"data": {"finishCount": 1, "receivedNum": 2, "finishPer": 50}},
+            "score": {
+                "data": {
+                    "showScore": True,
+                    "score": {"score": "85", "userName": "不应返回", "loginName": "secret"},
+                    "weightList": [{"name": "章节任务点", "value": 80}],
+                }
+            },
+            "attendance": {"allCount": 3, "attendanceCount": 3, "signPer": 100},
+        },
+        {"examFinishNum": "1", "examPublishNum": "2"},
+    )
+    assert records["chapter_tasks"]["completion_percent"] == 50
+    assert records["course_exams"] == {"completed": 1, "assigned": 2}
+    assert records["score"]["overall"] == "85"
+    assert "不应返回" not in str(records) and "secret" not in str(records)
+
+    malformed_counts = normalize_learning_record_sections(
+        {}, {"examFinishNum": "--", "examPublishNum": None}
+    )
+    assert malformed_counts["course_exams"] == {"completed": 0, "assigned": 0}
+
+
+def test_learning_discussion_class_search_filters_locally(monkeypatch) -> None:
+    class Response:
+        url = "https://groupweb.chaoxing.com/course/topic/bbs-1/getTopicList"
+        status_code = 200
+        headers = {"Content-Type": "application/json"}
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+
+        def __init__(self, payload: dict) -> None:
+            self.content = json.dumps(payload, ensure_ascii=False).encode()
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.params: list[dict] = []
+
+        def post(self, _url: str, *, params: dict, **_kwargs) -> Response:
+            self.params.append(params)
+            return Response(
+                {
+                    "status": True,
+                    "datas": [
+                        {"id": 1, "uuid": "a", "title": "Environmental issue"},
+                        {"id": 2, "uuid": "b", "title": "Writing process"},
+                    ],
+                    "folder_list": [],
+                    "poff": {"lastPage": True},
+                }
+            )
+
+    session = Session()
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(
+        api,
+        "_learning_module_response",
+        lambda _course, _module: {
+            "session": session,
+            "course_context": {"values": {"bbsid": "bbs-1"}},
+            "response": type("Page", (), {"url": "https://groupweb.chaoxing.com/course"})(),
+        },
+    )
+    course = {
+        "course_id": "10",
+        "course_name": "Writing",
+        "clazz_id": "20",
+    }
+
+    result = api.list_learning_discussions(
+        course,
+        search="environmental",
+        class_only=True,
+    )
+
+    assert session.params[0]["kw"] == ""
+    assert session.params[0]["searchType"] == "4"
+    assert [topic["title"] for topic in result["topics"]] == ["Environmental issue"]
 
 
 def test_resolve_class_defaults_to_first() -> None:
