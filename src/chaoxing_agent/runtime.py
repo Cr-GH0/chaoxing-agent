@@ -76,10 +76,16 @@ class ActionRuntime:
         if action == "session.check":
             return self._api().check_session()
         if action == "session.login":
+            login_options: dict[str, Any] = {
+                "fid": str(parameters.get("fid") or "-1"),
+            }
+            target_url = str(parameters.get("target_url") or "").strip()
+            if target_url:
+                login_options["target_url"] = target_url
             return self._api().login(
                 self._required(parameters, "username"),
                 self._required(parameters, "password"),
-                fid=str(parameters.get("fid") or "-1"),
+                **login_options,
             )
         if action == "space.modules.discover":
             return self._api().list_personal_space_modules()

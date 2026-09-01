@@ -32,6 +32,47 @@ async def test_runtime_dispatches_http_login_without_echoing_parameters(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_runtime_dispatches_cross_application_login_target(monkeypatch) -> None:
+    class TargetLoginAPI:
+        def __init__(self) -> None:
+            self.parameters: tuple[str, str, str, str] | None = None
+
+        def login(
+            self,
+            username: str,
+            password: str,
+            *,
+            fid: str,
+            target_url: str,
+        ) -> dict[str, object]:
+            self.parameters = (username, password, fid, target_url)
+            return {
+                "logged_in": True,
+                "target": {"target_reached": True},
+                "cookies_saved": 2,
+            }
+
+    runtime = ActionRuntime(Settings(cookie_file=Path("session.json"), request_timeout=20.0))
+    api = TargetLoginAPI()
+    monkeypatch.setattr(runtime, "_api", lambda: api)
+    target_url = "https://xueyinonline.chaoxing.com/livecoursenew?stuenc=secret-value"
+
+    result = await runtime.execute(
+        "session.login",
+        {
+            "username": "account",
+            "password": "private-password",
+            "fid": "23080",
+            "target_url": target_url,
+        },
+    )
+
+    assert api.parameters == ("account", "private-password", "23080", target_url)
+    assert result["result"]["target"]["target_reached"] is True
+    assert "private-password" not in str(result)
+
+
+@pytest.mark.asyncio
 async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypatch) -> None:
     class LearningAPI:
         def __init__(self) -> None:

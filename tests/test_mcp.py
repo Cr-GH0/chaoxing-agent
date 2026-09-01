@@ -9,6 +9,8 @@ async def test_mcp_exposes_semantic_tools() -> None:
     async with Client(mcp) as client:
         listing = await client.list_tools()
     names = {tool.name for tool in listing.tools}
+    login_tool = next(tool for tool in listing.tools if tool.name == "chaoxing_login")
+    assert "target_url" in login_tool.input_schema["properties"]
     assert {
         "chaoxing_capabilities",
         "chaoxing_check_session",

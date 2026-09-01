@@ -154,10 +154,20 @@ class LoginResponse:
 
 
 class LoginSession:
-    def __init__(self, login_payload: dict) -> None:
+    def __init__(
+        self,
+        login_payload: dict,
+        *,
+        target_url: str = "",
+        target_final_url: str = "",
+        target_body: str = "",
+    ) -> None:
         self.headers: dict[str, str] = {}
         self.cookies = requests.cookies.RequestsCookieJar()
         self.login_payload = login_payload
+        self.target_url = target_url
+        self.target_final_url = target_final_url
+        self.target_body = target_body
         self.calls: list[tuple[str, str, dict]] = []
 
     def get(self, url: str, **kwargs) -> LoginResponse:
@@ -170,6 +180,11 @@ class LoginSession:
                     '<input type="hidden" name="fid" value="-1">'
                     '<input type="hidden" name="forbidotherlogin" value="0">'
                 ),
+            )
+        if self.target_url and url == self.target_url:
+            return LoginResponse(
+                url=self.target_final_url or self.target_url,
+                body=self.target_body,
             )
         return LoginResponse(
             url="https://i.chaoxing.com/",
@@ -261,6 +276,82 @@ def test_failed_http_login_redacts_server_reflected_password(tmp_path, monkeypat
 
     assert password not in str(error.value)
     assert "[redacted]" in str(error.value)
+
+
+def test_http_login_verifies_cross_application_target_without_returning_signed_queries(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cookie_file = tmp_path / "session.json"
+    target_url = (
+        "https://xueyinonline.chaoxing.com/schoolcourseInfo/"
+        "teachingclassmanage/livecoursenew?courseId=1&stuenc=student-secret"
+    )
+    session = LoginSession(
+        {
+            "status": True,
+            "url": ("https%3A//xueyinonline.chaoxing.com/sso/callback%3Fticket%3Dticket-secret"),
+        },
+        target_url=target_url,
+        target_body="<title>直播课</title><main>直播安排</main>",
+    )
+    monkeypatch.setattr(ChaoxingAPI, "_new_session", staticmethod(lambda: session))
+
+    result = ChaoxingAPI(cookie_file).login(
+        "13800138000",
+        "密码123",
+        target_url=target_url,
+    )
+
+    assert result["logged_in"] is True
+    assert result["target"] == {
+        "requested_host": "xueyinonline.chaoxing.com",
+        "requested_path": "/schoolcourseInfo/teachingclassmanage/livecoursenew",
+        "final_host": "xueyinonline.chaoxing.com",
+        "final_path": "/schoolcourseInfo/teachingclassmanage/livecoursenew",
+        "http_status": 200,
+        "title": "直播课",
+        "login_redirected": False,
+        "target_reached": True,
+        "verification": "target host reached without a Chaoxing login page",
+    }
+    serialized = json.dumps(result, ensure_ascii=False)
+    assert "student-secret" not in serialized
+    assert "ticket-secret" not in serialized
+    assert cookie_file.exists()
+    assert any(call[0] == "GET" and call[1] == target_url for call in session.calls)
+    assert any(call[0] == "GET" and call[1] == "https://i.chaoxing.com/" for call in session.calls)
+
+
+def test_cross_application_login_redirect_preserves_existing_cookie_file(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    cookie_file = tmp_path / "session.json"
+    original = '{"cookies":[{"name":"old","value":"still-valid"}]}\n'
+    cookie_file.write_text(original, encoding="utf-8")
+    target_url = (
+        "https://xueyinonline.chaoxing.com/schoolcourseInfo/"
+        "teachingclassmanage/livecoursenew?stuenc=student-secret"
+    )
+    session = LoginSession(
+        {"status": True, "url": "https%3A//i.chaoxing.com/"},
+        target_url=target_url,
+        target_final_url=("https://passport2.chaoxing.com/login?refer=target-secret"),
+        target_body=('<form action="/fanyalogin"><input name="uname"></form>'),
+    )
+    monkeypatch.setattr(ChaoxingAPI, "_new_session", staticmethod(lambda: session))
+
+    with pytest.raises(ChaoxingAPIError, match="requested Chaoxing target") as error:
+        ChaoxingAPI(cookie_file).login(
+            "13800138000",
+            "密码123",
+            target_url=target_url,
+        )
+
+    assert "student-secret" not in str(error.value)
+    assert "target-secret" not in str(error.value)
+    assert cookie_file.read_text(encoding="utf-8") == original
 
 
 def test_subject_creation_listing_normalizes_folders_subjects_and_recycle_flags(

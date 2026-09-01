@@ -35,8 +35,8 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         CapabilityState.IMPLEMENTED,
         "http_api",
         description=(
-            "使用账号和密码调用学习通登录接口，验证个人空间后原子保存 Cookie；"
-            "不打开浏览器，也不安装学习通客户端。"
+            "使用账号和密码调用学习通登录接口，分别验证个人空间和可选的超星跨应用"
+            "目标页后原子保存 Cookie；不打开浏览器，也不安装学习通客户端。"
         ),
         aliases=("登录学习通", "登录超星", "刷新登录"),
     ),

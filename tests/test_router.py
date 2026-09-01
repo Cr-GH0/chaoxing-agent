@@ -10,11 +10,20 @@ def test_route_login_status() -> None:
 def test_route_http_login_with_and_without_credentials() -> None:
     incomplete = route_command("重新登录学习通")
     complete = route_command("登录学习通账号《13800138000》密码《secret-value》")
+    targeted = route_command(
+        "登录学习通账号《13800138000》密码《secret-value》，并验证 "
+        "https://xueyinonline.chaoxing.com/livecoursenew?courseId=1"
+    )
     assert incomplete.action == "session.login"
     assert incomplete.missing_fields == ["username", "password"]
     assert complete.action == "session.login"
     assert complete.parameters == {"username": "13800138000", "password": "secret-value"}
     assert complete.missing_fields == []
+    assert targeted.action == "session.login"
+    assert targeted.parameters["target_url"] == (
+        "https://xueyinonline.chaoxing.com/livecoursenew?courseId=1"
+    )
+    assert targeted.missing_fields == []
 
 
 def test_route_job_ability_public_search_catalog_and_industry_actions() -> None:

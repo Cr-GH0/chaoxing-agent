@@ -35,11 +35,19 @@ async def chaoxing_check_session() -> dict[str, Any]:
 
 
 @mcp.tool()
-async def chaoxing_login(username: str, password: str, fid: str = "-1") -> dict[str, Any]:
-    """Log in through Chaoxing HTTP APIs and save only verified session cookies."""
+async def chaoxing_login(
+    username: str,
+    password: str,
+    fid: str = "-1",
+    target_url: str = "",
+) -> dict[str, Any]:
+    """Log in through HTTP, optionally verifying a Chaoxing cross-application target."""
+    parameters = {"username": username, "password": password, "fid": fid}
+    if target_url:
+        parameters["target_url"] = target_url
     return await runtime.execute(
         "session.login",
-        {"username": username, "password": password, "fid": fid},
+        parameters,
     )
 
 

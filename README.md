@@ -62,6 +62,12 @@ uv run chaoxing-agent login --username "您的学习通账号"
 
 密码通过隐藏输入读取，也可以临时放入 `CHAOXING_PASSWORD` 环境变量；密码不会写入结果或 Cookie 文件。登录只有在个人空间验证通过后才保存 Cookie。
 
+学银在线等超星跨应用页面需要额外 SSO 时，可把当前页面地址作为目标；运行时先完成平台返回的 HTTP 跳转，再分别验证个人空间登录状态与目标主机，且响应不返回目标查询参数或 SSO 票据：
+
+```powershell
+uv run chaoxing-agent login --username "您的学习通账号" --target-url "https://xueyinonline.chaoxing.com/..."
+```
+
 检查会话：
 
 ```powershell

@@ -120,6 +120,11 @@ def build_parser() -> argparse.ArgumentParser:
     login = sub.add_parser("login", help="log in through HTTP and atomically save cookies")
     login.add_argument("--username", help="account or phone; otherwise env or prompt")
     login.add_argument("--fid", default="-1", help="institution id; default: -1")
+    login.add_argument(
+        "--target-url",
+        default="",
+        help="optional HTTPS chaoxing.com page to verify after cross-application SSO",
+    )
     sub.add_parser("space-modules", help="discover current personal-space function entries")
     space_module = sub.add_parser(
         "space-open", help="fetch one personal-space function through authenticated HTTP"
@@ -4408,7 +4413,12 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
         password = os.getenv("CHAOXING_PASSWORD") or getpass.getpass("Chaoxing password: ")
         return await runtime.execute(
             "session.login",
-            {"username": username, "password": password, "fid": args.fid},
+            {
+                "username": username,
+                "password": password,
+                "fid": args.fid,
+                "target_url": args.target_url,
+            },
         )
     if args.command == "space-modules":
         return await runtime.execute("space.modules.discover")

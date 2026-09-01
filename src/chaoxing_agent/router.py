@@ -360,6 +360,9 @@ def route_command(command: str) -> CommandPlan:
             parameters["username"] = quoted[0]
         if len(quoted) >= 2:
             parameters["password"] = quoted[1]
+        target_match = re.search(r"https://[^\s》”\"']+", text, flags=re.I)
+        if target_match:
+            parameters["target_url"] = target_match.group(0).rstrip("，。；;,.)）]")
         missing = [key for key in ("username", "password") if key not in parameters]
         return CommandPlan(
             text,

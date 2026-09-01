@@ -7495,6 +7495,59 @@ class ChaoxingAPI:
             ),
         }
 
+    @staticmethod
+    def _safe_request_failure(operation: str, exc: requests.RequestException) -> str:
+        """Describe a failed authenticated request without reflecting signed URLs."""
+        response = getattr(exc, "response", None)
+        status_code = getattr(response, "status_code", None)
+        if isinstance(status_code, int):
+            return f"{operation} failed (HTTP {status_code})"
+        return f"{operation} failed ({exc.__class__.__name__})"
+
+    def _login_target_status(
+        self,
+        response: requests.Response,
+        requested_url: str,
+    ) -> dict[str, Any]:
+        """Verify a cross-application login target without returning signed query values."""
+        requested = urlparse(requested_url)
+        final = urlparse(response.url)
+        html = self._decode(response)
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.I | re.S)
+        requested_host = (requested.hostname or "").lower()
+        final_host = (final.hostname or "").lower()
+        final_path = final.path or "/"
+        lowered_path = final_path.rstrip("/").casefold() or "/"
+        lowered_html = html.casefold()
+        login_page = (
+            (
+                final_host in {"passport.chaoxing.com", "passport2.chaoxing.com"}
+                and (lowered_path == "/login" or lowered_path.startswith("/login/"))
+            )
+            or lowered_path == "/login"
+            or lowered_path.startswith("/login/")
+            or (
+                "fanyalogin" in lowered_html
+                and ('name="uname"' in lowered_html or "name='uname'" in lowered_html)
+            )
+        )
+        target_reached = final_host == requested_host and not login_page
+        return {
+            "requested_host": requested_host,
+            "requested_path": requested.path or "/",
+            "final_host": final_host,
+            "final_path": final_path,
+            "http_status": response.status_code,
+            "title": html_text(title_match.group(1)) if title_match else "",
+            "login_redirected": login_page,
+            "target_reached": target_reached,
+            "verification": (
+                "target host reached without a Chaoxing login page"
+                if target_reached
+                else "target host was not reached with the authenticated session"
+            ),
+        }
+
     def login(
         self,
         username: str,
@@ -7521,7 +7574,7 @@ class ChaoxingAPI:
             page_response = session.get(login_page_url, timeout=self.timeout)
             page_response.raise_for_status()
         except requests.RequestException as exc:
-            raise ChaoxingAPIError(f"login page request failed: {exc}") from exc
+            raise ChaoxingAPIError(self._safe_request_failure("login page request", exc)) from exc
 
         hidden = parse_hidden_inputs(self._decode(page_response))
         t_value = hidden.get("t", "true")
@@ -7586,21 +7639,45 @@ class ChaoxingAPI:
             if result_url and result_url != target_url:
                 warmup = session.get(result_url, timeout=self.timeout, allow_redirects=True)
                 warmup.raise_for_status()
-            verification_response = session.get(
+            target_response = session.get(
                 target_url,
                 timeout=self.timeout,
                 allow_redirects=True,
             )
-            verification_response.raise_for_status()
+            target_response.raise_for_status()
         except requests.RequestException as exc:
-            raise ChaoxingAPIError(f"post-login verification failed: {exc}") from exc
-        status = self._session_status(verification_response)
+            raise ChaoxingAPIError(
+                self._safe_request_failure("post-login target verification", exc)
+            ) from exc
+
+        target_status = self._login_target_status(target_response, target_url)
+        if target_url == AUTH_CHECK_URL:
+            auth_response = target_response
+        else:
+            try:
+                auth_response = session.get(
+                    AUTH_CHECK_URL,
+                    timeout=self.timeout,
+                    allow_redirects=True,
+                )
+                auth_response.raise_for_status()
+            except requests.RequestException as exc:
+                raise ChaoxingAPIError(
+                    self._safe_request_failure("personal-space verification", exc)
+                ) from exc
+
+        status = self._session_status(auth_response)
         if not status["logged_in"]:
             raise ChaoxingAPIError(
                 "login response succeeded but authenticated personal-space verification failed"
             )
+        if not target_status["target_reached"]:
+            raise ChaoxingAPIError(
+                "login response succeeded but the requested Chaoxing target returned to login "
+                "or another host"
+            )
         cookie_count = save_cookie_file_atomic(session, self.cookie_file)
-        return {
+        result = {
             **status,
             "cookies_saved": cookie_count,
             "cookie_file": str(self.cookie_file),
@@ -7608,6 +7685,13 @@ class ChaoxingAPI:
                 "authenticated personal-space markers present; verified cookies saved atomically"
             ),
         }
+        if target_url != AUTH_CHECK_URL:
+            result["target"] = target_status
+            result["verification"] = (
+                "authenticated personal-space markers present; requested Chaoxing target reached; "
+                "verified cookies saved atomically"
+            )
+        return result
 
     def check_session(self) -> dict[str, Any]:
         try:

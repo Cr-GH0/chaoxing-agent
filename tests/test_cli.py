@@ -95,10 +95,22 @@ def test_job_ability_cli_parses_search_catalog_and_industry_commands() -> None:
 
 def test_login_cli_accepts_username_and_fid_without_password_argument() -> None:
     parser = build_parser()
-    login = parser.parse_args(["login", "--username", "13800138000", "--fid", "23080"])
+    target_url = "https://xueyinonline.chaoxing.com/livecoursenew"
+    login = parser.parse_args(
+        [
+            "login",
+            "--username",
+            "13800138000",
+            "--fid",
+            "23080",
+            "--target-url",
+            target_url,
+        ]
+    )
     assert login.command == "login"
     assert login.username == "13800138000"
     assert login.fid == "23080"
+    assert login.target_url == target_url
     login_action = next(action for action in parser._actions if action.dest == "command")
     login_parser = login_action.choices["login"]
     assert all(action.dest != "password" for action in login_parser._actions)
