@@ -5769,6 +5769,45 @@ SPACE_MODULES: tuple[tuple[str, str], ...] = (
 )
 
 
+COURSE_SURFACE_DOMAINS: dict[str, tuple[str, ...]] = {
+    "ai_workbench": ("ai_workbench",),
+    "task_engine": ("task_engine",),
+    "class_activity": ("class_activities",),
+    "courseware": ("course_assets",),
+    "teaching_plan": ("course_assets",),
+    "chapters": ("chapters",),
+    "materials": ("resources",),
+    "notices": ("notices",),
+    "topics": ("discussions",),
+    "homework": ("homework",),
+    "exams": ("exams",),
+    "question_bank": ("question_bank",),
+    "knowledge_graph": ("knowledge_graph",),
+    "statistics": ("statistics",),
+    "management": ("class_management", "statistics"),
+    "ai_knowledge_base": ("knowledge_hub",),
+    "live_classes": ("live",),
+}
+
+
+SPACE_SURFACE_DOMAINS: dict[str, tuple[str, ...]] = {
+    "course_teaching": ("courses", "class_management"),
+    "attainment": (),
+    "job_ability": ("job_ability",),
+    "syllabus": (),
+    "notes": ("notes",),
+    "inbox": ("inbox",),
+    "messages": (),
+    "groups": ("groups",),
+    "cloud_disk": ("cloud_disk",),
+    "contacts": ("contacts",),
+    "aigc_check": ("detection",),
+    "live_room": ("live",),
+    "similarity_check": ("detection",),
+    "topic_creation": ("subjects",),
+}
+
+
 OBSERVED_ACTIONS: tuple[ActionSpec, ...] = tuple(
     ActionSpec(
         f"course.surface.{slug}",
@@ -5778,7 +5817,7 @@ OBSERVED_ACTIONS: tuple[ActionSpec, ...] = tuple(
         CapabilityState.OBSERVED,
         "pending",
         live_verified=True,
-        description=f"已在教师课程页观察到“{label}”入口；入口内的具体读写动作仍需逐项建模。",
+        description=(f"已在教师课程页观察到“{label}”入口；具体语义动作覆盖见 surface_coverage。"),
     )
     for slug, label in COURSE_MODULES
 ) + tuple(
@@ -5790,7 +5829,9 @@ OBSERVED_ACTIONS: tuple[ActionSpec, ...] = tuple(
         CapabilityState.OBSERVED,
         "pending",
         live_verified=True,
-        description=f"已在个人空间观察到“{label}”入口；入口内的具体读写动作仍需逐项建模。",
+        description=(
+            f"已在个人空间观察到“{label}”入口；具体语义动作或通用读取边界见 surface_coverage。"
+        ),
     )
     for slug, label in SPACE_MODULES
 )
@@ -5798,6 +5839,32 @@ OBSERVED_ACTIONS: tuple[ActionSpec, ...] = tuple(
 
 ACTION_CATALOG: tuple[ActionSpec, ...] = IMPLEMENTED_ACTIONS + OBSERVED_ACTIONS
 ACTION_BY_NAME = {action.name: action for action in ACTION_CATALOG}
+
+
+def _surface_coverage() -> list[dict[str, Any]]:
+    implemented_by_domain = Counter(action.domain for action in IMPLEMENTED_ACTIONS)
+    result: list[dict[str, Any]] = []
+    for surface, modules, mapping in (
+        ("course", COURSE_MODULES, COURSE_SURFACE_DOMAINS),
+        ("space", SPACE_MODULES, SPACE_SURFACE_DOMAINS),
+    ):
+        for slug, label in modules:
+            domains = mapping[slug]
+            implemented_count = sum(implemented_by_domain[domain] for domain in domains)
+            result.append(
+                {
+                    "surface": surface,
+                    "slug": slug,
+                    "label": label,
+                    "semantic_domains": list(domains),
+                    "implemented_action_count": implemented_count,
+                    "coverage": "semantic_actions" if domains else "generic_entry_only",
+                    "fallback_action": (
+                        "course.module.open" if surface == "course" else "space.module.open"
+                    ),
+                }
+            )
+    return result
 
 
 def capability_report() -> dict[str, Any]:
@@ -5808,11 +5875,12 @@ def capability_report() -> dict[str, Any]:
     )
     return {
         "status": "ok",
-        "scope": "current teacher web surfaces observed on 2026-08-31",
+        "scope": "current teacher and personal-space web surfaces observed through 2026-09-01",
         "summary": {
             "total": len(ACTION_CATALOG),
             "by_state": dict(state_counts),
             "by_verification": dict(verified_counts),
         },
+        "surface_coverage": _surface_coverage(),
         "actions": [action.to_dict() for action in ACTION_CATALOG],
     }

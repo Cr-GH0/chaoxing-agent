@@ -362,6 +362,25 @@ def test_report_keeps_observed_separate_from_implemented() -> None:
     assert counts["implemented"] == 530
 
 
+def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None:
+    report = capability_report()
+    coverage = {(item["surface"], item["slug"]): item for item in report["surface_coverage"]}
+    assert len(coverage) == 31
+    assert coverage[("course", "knowledge_graph")]["semantic_domains"] == ["knowledge_graph"]
+    assert coverage[("course", "management")]["semantic_domains"] == [
+        "class_management",
+        "statistics",
+    ]
+    assert coverage[("space", "job_ability")]["implemented_action_count"] == 9
+    assert coverage[("space", "attainment")]["coverage"] == "generic_entry_only"
+    assert coverage[("space", "attainment")]["fallback_action"] == "space.module.open"
+    assert all(
+        item["coverage"] == "semantic_actions"
+        for item in coverage.values()
+        if item["surface"] == "course"
+    )
+
+
 def test_live_verification_distinguishes_supported_cloud_actions_from_limited_copy() -> None:
     for name in (
         "space.modules.discover",
