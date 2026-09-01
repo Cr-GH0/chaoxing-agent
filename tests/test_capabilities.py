@@ -413,6 +413,7 @@ def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None
 
 def test_live_verification_distinguishes_supported_cloud_actions_from_limited_copy() -> None:
     for name in (
+        "session.login",
         "space.modules.discover",
         "space.module.open",
         "job_ability.status.read",

@@ -34,6 +34,7 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         ActionRisk.WRITE,
         CapabilityState.IMPLEMENTED,
         "http_api",
+        live_verified=True,
         description=(
             "使用账号和密码调用学习通登录接口，分别验证个人空间和可选的超星跨应用"
             "目标页后原子保存 Cookie；学生课程目标可按课程和模块在内存中解析；"

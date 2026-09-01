@@ -124,9 +124,61 @@ def test_login_cli_accepts_username_and_fid_without_password_argument() -> None:
     )
     assert learning_login.learning_course == "测试课程"
     assert learning_login.learning_module == "直播课/见面课"
+    dialog_login = parser.parse_args(
+        [
+            "login",
+            "--windows-dialog",
+            "--learning-course",
+            "测试课程",
+        ]
+    )
+    assert dialog_login.windows_dialog is True
+    assert dialog_login.learning_module == "直播课/见面课"
     login_action = next(action for action in parser._actions if action.dest == "command")
     login_parser = login_action.choices["login"]
     assert all(action.dest != "password" for action in login_parser._actions)
+
+
+@pytest.mark.asyncio
+async def test_login_windows_dialog_does_not_read_from_terminal(monkeypatch) -> None:
+    class Runtime:
+        def __init__(self) -> None:
+            self.call = None
+
+        async def execute(self, action, parameters, confirmation_token=None):
+            self.call = (action, dict(parameters), confirmation_token)
+            return {"status": "ok", "logged_in": True}
+
+    def fail_terminal_prompt(*_args, **_kwargs):
+        raise AssertionError("terminal credential prompt must not run")
+
+    monkeypatch.setattr(
+        "chaoxing_agent.windows_credentials.prompt_windows_credentials",
+        lambda: ("dialog-user", "dialog-secret"),
+    )
+    monkeypatch.setattr("builtins.input", fail_terminal_prompt)
+    monkeypatch.setattr("chaoxing_agent.cli.getpass.getpass", fail_terminal_prompt)
+    args = build_parser().parse_args(
+        [
+            "login",
+            "--windows-dialog",
+            "--learning-course",
+            "测试课程",
+            "--learning-module",
+            "直播课/见面课",
+        ]
+    )
+    runtime = Runtime()
+
+    result = await _run_action(args, runtime)
+
+    action, parameters, token = runtime.call
+    assert action == "session.login"
+    assert parameters["username"] == "dialog-user"
+    assert parameters["password"] == "dialog-secret"
+    assert parameters["learning_course"] == "测试课程"
+    assert token is None
+    assert "dialog-secret" not in str(result)
 
 
 def test_subject_creation_cli_parses_read_folder_and_subject_commands() -> None:

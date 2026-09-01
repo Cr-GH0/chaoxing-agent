@@ -118,7 +118,13 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("capabilities", help="show capability coverage")
     sub.add_parser("session", help="check the configured Chaoxing session")
     login = sub.add_parser("login", help="log in through HTTP and atomically save cookies")
-    login.add_argument("--username", help="account or phone; otherwise env or prompt")
+    login_credentials = login.add_mutually_exclusive_group()
+    login_credentials.add_argument("--username", help="account or phone; otherwise env or prompt")
+    login_credentials.add_argument(
+        "--windows-dialog",
+        action="store_true",
+        help="collect one-use username and password in the native Windows credential dialog",
+    )
     login.add_argument("--fid", default="-1", help="institution id; default: -1")
     login_target = login.add_mutually_exclusive_group()
     login_target.add_argument(
@@ -4418,21 +4424,28 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
     if args.command == "session":
         return await runtime.execute("session.check")
     if args.command == "login":
-        username = str(args.username or os.getenv("CHAOXING_USERNAME") or "").strip()
-        if not username:
-            username = input("Chaoxing username / phone: ").strip()
-        password = os.getenv("CHAOXING_PASSWORD") or getpass.getpass("Chaoxing password: ")
-        return await runtime.execute(
-            "session.login",
-            {
-                "username": username,
-                "password": password,
-                "fid": args.fid,
-                "target_url": args.target_url,
-                "learning_course": args.learning_course,
-                "learning_module": args.learning_module,
-            },
-        )
+        if args.windows_dialog:
+            from .windows_credentials import prompt_windows_credentials
+
+            username, password = prompt_windows_credentials()
+        else:
+            username = str(args.username or os.getenv("CHAOXING_USERNAME") or "").strip()
+            if not username:
+                username = input("Chaoxing username / phone: ").strip()
+            password = os.getenv("CHAOXING_PASSWORD") or getpass.getpass("Chaoxing password: ")
+        parameters = {
+            "username": username,
+            "password": password,
+            "fid": args.fid,
+            "target_url": args.target_url,
+            "learning_course": args.learning_course,
+            "learning_module": args.learning_module,
+        }
+        try:
+            return await runtime.execute("session.login", parameters)
+        finally:
+            parameters["password"] = ""
+            password = ""
     if args.command == "space-modules":
         return await runtime.execute("space.modules.discover")
     if args.command == "space-open":

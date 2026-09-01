@@ -57,21 +57,23 @@ uv sync --extra dev
 
 ```powershell
 $env:CHAOXING_COOKIE_FILE = "$env:LOCALAPPDATA\chaoxing-agent\cookies.json"
-uv run chaoxing-agent login --username "您的学习通账号"
+uv run chaoxing-agent login --windows-dialog
 ```
 
-密码通过隐藏输入读取，也可以临时放入 `CHAOXING_PASSWORD` 环境变量；密码不会写入结果或 Cookie 文件。登录只有在个人空间验证通过后才保存 Cookie。
+Windows 用户建议使用 `--windows-dialog`。它调用系统原生凭据对话框，账号和密码不会成为命令参数，也不会进入 PowerShell 命令历史；对话框不显示“保存”选项，也不会把凭据写入 Windows 凭据管理器。原生凭据缓冲区在调用后清零并释放，密码不会写入结果或 Cookie 文件。登录只有在个人空间验证通过后才保存 Cookie。
+
+普通终端仍可使用 `--username`，密码随后通过隐藏输入读取；无人值守环境也可临时设置 `CHAOXING_USERNAME` 与 `CHAOXING_PASSWORD`。不要在由 Agent 间接控制、可能失去交互进程的终端里使用这种逐行输入方式。
 
 学银在线等超星跨应用页面需要额外 SSO 时，可把当前页面地址作为目标；运行时先完成平台返回的 HTTP 跳转，再分别验证个人空间登录状态与目标主机，且响应不返回目标查询参数或 SSO 票据：
 
 ```powershell
-uv run chaoxing-agent login --username "您的学习通账号" --target-url "https://xueyinonline.chaoxing.com/..."
+uv run chaoxing-agent login --windows-dialog --target-url "https://xueyinonline.chaoxing.com/..."
 ```
 
 对于学生课程模块，优先按课程名解析目标，代理无需读取或传递带签名的地址：
 
 ```powershell
-uv run chaoxing-agent login --username "您的学习通账号" --learning-course "课程名" --learning-module "直播课/见面课"
+uv run chaoxing-agent login --windows-dialog --learning-course "课程名" --learning-module "直播课/见面课"
 ```
 
 该方式需要当前 Cookie 至少仍能读取“我学的课”，以便在内存中选定课程和模块；如果主会话也已过期，先执行一次普通 `login`，再执行上述目标登录。

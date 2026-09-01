@@ -49,6 +49,8 @@
 
 `session.login` 调用学习通 HTTP 登录接口。用户名和密码只存在于单次调用内；密码不会写入响应、本地状态或 Cookie 文件。登录返回成功后，运行时再次请求个人空间，只有发现已认证标记才原子保存 Cookie。
 
+Windows CLI 的 `--windows-dialog` 使用系统 `CredUIPromptForWindowsCredentialsW` 收集一次性账号和密码，并使用 `CredUnPackAuthenticationBufferW` 解包。调用不启用保存复选框；解包后的原生字符缓冲区和 Windows 返回的认证 BLOB 在使用后清零，BLOB 随后由 `CoTaskMemFree` 释放。该对话框只是 CLI 的本机输入通道，不改变 HTTP-only 运行模型，也不引入浏览器、WebDriver 或学习通客户端依赖。MCP 与无人值守调用不会自行弹出对话框。
+
 对于学银在线等超星跨应用页面，调用方可提供可选 `target_url`。登录页的 `refer`、`/fanyalogin` 返回的跳转地址和目标页均在同一临时 HTTP 会话内完成。个人空间认证与目标页认证独立验证：前者必须出现已登录标记，后者必须到达原目标主机且未落回登录页。响应仅返回目标主机、路径、状态码和标题，不返回查询参数、`stuenc` 或 SSO 票据；任一验证失败时也不会覆盖现有 Cookie 文件。
 
 学生课程模块还可使用 `learning_course` 与 `learning_module` 进行语义选择。运行时通过当前保存会话读取学生课程入口，在内存中构造签名目标，然后立即交给同一次登录动作；公开结果只保留课程、班级、模块及脱敏后的目标验证信息。原始模块地址不写入本地状态，也不返回给调用方。课程语义选择与原始 `target_url` 互斥。
