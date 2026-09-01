@@ -5324,6 +5324,55 @@ def route_command(command: str) -> CommandPlan:
                 missing_fields=[] if quoted else ["course"],
                 message="请用书名号提供要查看 AI 工具的课程。" if not quoted else "",
             )
+        if "作业" in text and re.search(r"暂存|保存(?:作业)?草稿", text):
+            parameters: dict[str, object] = {}
+            operands = list(quoted)
+            if operands:
+                parameters["course"] = operands.pop(0)
+            if operands and operands[0] == "作业":
+                operands.pop(0)
+            if operands:
+                parameters["homework"] = operands.pop(0)
+            question_match = re.search(r"第\s*(\d+)\s*题", text)
+            if question_match:
+                question = question_match.group(1)
+                if operands:
+                    parameters["updates"] = [{"question": question, "answer": operands[-1]}]
+            missing = [key for key in ("course", "homework") if key not in parameters]
+            if not question_match:
+                missing.append("question")
+            if "updates" not in parameters:
+                missing.append("answer")
+            return CommandPlan(
+                text,
+                "learning.course.homework.answers.save",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message=("请依次用书名号提供课程、作业和答案，并写明第几题。" if missing else ""),
+            )
+        if (
+            "作业" in text
+            and re.search(r"(?<!已)提交|交卷|正式交作业|交作业", text)
+            and not re.search(r"查看|读取|列出|显示|已提交|提交记录", text)
+        ):
+            parameters: dict[str, object] = {}
+            operands = list(quoted)
+            if operands:
+                parameters["course"] = operands.pop(0)
+            if operands and operands[0] == "作业":
+                operands.pop(0)
+            if operands:
+                parameters["homework"] = operands[0]
+            missing = [key for key in ("course", "homework") if key not in parameters]
+            return CommandPlan(
+                text,
+                "learning.course.homework.submit",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.72,
+                missing_fields=missing,
+                message="请依次用书名号提供课程和要提交的作业。" if missing else "",
+            )
         if "作业" in text and re.search(r"重做|重新作答|再次作答", text):
             parameters: dict[str, object] = {}
             if quoted:

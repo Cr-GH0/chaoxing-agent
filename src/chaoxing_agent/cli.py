@@ -1561,6 +1561,22 @@ def build_parser() -> argparse.ArgumentParser:
     learning_homework_answer_enter.add_argument("course")
     learning_homework_answer_enter.add_argument("homework")
 
+    learning_homework_answer_save = sub.add_parser(
+        "learning-homework-answer-save",
+        help="partially update and temporarily save learner homework answers",
+    )
+    learning_homework_answer_save.add_argument("course")
+    learning_homework_answer_save.add_argument("homework")
+    learning_homework_answer_save.add_argument("--updates-json", required=True)
+
+    learning_homework_submit = sub.add_parser(
+        "learning-homework-submit",
+        help="submit current learner homework answers after an action-bound confirmation",
+    )
+    learning_homework_submit.add_argument("course")
+    learning_homework_submit.add_argument("homework")
+    learning_homework_submit.add_argument("--confirmation-token")
+
     learning_homework_redo = sub.add_parser(
         "learning-homework-redo",
         help="redo learner homework after an action-bound confirmation",
@@ -5964,6 +5980,21 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
         return await runtime.execute(
             "learning.course.homework.answer.enter",
             {"course": args.course, "homework": args.homework},
+        )
+    if args.command == "learning-homework-answer-save":
+        return await runtime.execute(
+            "learning.course.homework.answers.save",
+            {
+                "course": args.course,
+                "homework": args.homework,
+                "updates": _parse_json_list(args.updates_json, "updates-json"),
+            },
+        )
+    if args.command == "learning-homework-submit":
+        return await runtime.execute(
+            "learning.course.homework.submit",
+            {"course": args.course, "homework": args.homework},
+            confirmation_token=args.confirmation_token,
         )
     if args.command == "learning-homework-redo":
         return await runtime.execute(

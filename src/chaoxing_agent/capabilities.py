@@ -2389,6 +2389,34 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         aliases=("开始作答学生作业", "继续我的作业", "进入作业答题页"),
     ),
     ActionSpec(
+        "learning.course.homework.answers.save",
+        "暂存学生作业答案",
+        "learning_homework",
+        ActionRisk.WRITE,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description=(
+            "按题号、题目 ID 或唯一题干只更新用户指定的答案，保留当前表单中其余字段；"
+            "服务器确认后重新获取答题表单，核验指定字段并确认作业仍为未交。当前账号"
+            "没有活动期可作答样本，尚未完成真实暂存验证。"
+        ),
+        aliases=("暂存我的作业答案", "保存学生作业草稿", "修改并暂存作业答案"),
+    ),
+    ActionSpec(
+        "learning.course.homework.submit",
+        "提交学生课程作业",
+        "learning_homework",
+        ActionRisk.PUBLISH,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description=(
+            "使用当前答题表单的全部字段校验并提交作业；执行前必须使用动作绑定的一次性"
+            "确认，且只有服务器确认并刷新列表显示已交后才报告成功。当前账号没有活动期"
+            "可提交样本，尚未完成真实提交验证。"
+        ),
+        aliases=("提交我的作业", "交学生课程作业", "作业交卷"),
+    ),
+    ActionSpec(
         "learning.course.homework.redo",
         "重做学生作业",
         "learning_homework",

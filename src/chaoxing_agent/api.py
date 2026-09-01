@@ -7463,6 +7463,319 @@ def parse_learning_homework_answer_form(
     }
 
 
+LEARNING_HOMEWORK_ANSWER_TYPES: dict[str, str] = {
+    "0": "single_choice",
+    "1": "multiple_choice",
+    "2": "fill_blank",
+    "3": "true_false",
+    "4": "short_answer",
+    "6": "essay",
+    "8": "other",
+    "9": "programming",
+}
+
+
+def _learning_homework_submission_form_context(
+    html: str,
+    *,
+    base_url: str,
+) -> dict[str, Any]:
+    """Return the observed learner-answer POST form while keeping its values private."""
+
+    candidates: list[dict[str, Any]] = []
+    for opening in re.finditer(r"<form\b[^>]*>", str(html or ""), flags=re.I | re.S):
+        attrs = html_attrs(opening.group(0))
+        raw_action = str(attrs.get("action") or "").strip()
+        if not raw_action:
+            continue
+        candidate = urljoin(base_url, unescape(raw_action))
+        parsed = urlparse(candidate)
+        if not parsed.path.casefold().rstrip("/").endswith("/work/addstudentworknewweb"):
+            continue
+        endpoint = validated_chaoxing_url(
+            candidate,
+            "learner homework submission URL",
+        )
+        fragment = _html_element_fragment(str(html or ""), opening)
+        controls = _html_form_controls(fragment)
+        names = {name for name, _ in controls}
+        if "workAnswerId" not in names or not any(
+            re.fullmatch(r"answertype\d+", name, flags=re.I) for name in names
+        ):
+            continue
+        candidates.append(
+            {
+                "endpoint": endpoint,
+                "fragment": fragment,
+                "controls": controls,
+                "form_id": str(attrs.get("id") or ""),
+                "form_name": str(attrs.get("name") or ""),
+                "method": str(attrs.get("method") or "GET").upper(),
+            }
+        )
+    if not candidates:
+        raise ChaoxingAPIError(
+            "learner homework answer page does not expose the observed submission form"
+        )
+    if len(candidates) > 1:
+        raise ChaoxingAPIError("learner homework answer page exposes multiple submission forms")
+
+    context = candidates[0]
+    if context["method"] != "POST":
+        raise ChaoxingAPIError("learner homework submission form is not POST")
+    controls = context["controls"]
+    question_fields: list[dict[str, Any]] = []
+    seen_question_ids: set[str] = set()
+    for name, value in controls:
+        match = re.fullmatch(r"answertype(?P<question_id>\d+)", name, flags=re.I)
+        if not match:
+            continue
+        question_id = match.group("question_id")
+        if question_id in seen_question_ids:
+            raise ChaoxingAPIError(
+                f"learner homework submission form repeats question type {question_id}"
+            )
+        seen_question_ids.add(question_id)
+        answer_names = sorted(
+            {
+                control_name
+                for control_name, _ in controls
+                if re.fullmatch(
+                    rf"(?:answer|answerEditor|answercheck|tiankongsize){re.escape(question_id)}\d*",
+                    control_name,
+                    flags=re.I,
+                )
+            }
+        )
+        question_fields.append(
+            {
+                "question_id": question_id,
+                "answer_type_code": str(value),
+                "answer_type": LEARNING_HOMEWORK_ANSWER_TYPES.get(str(value), "unknown"),
+                "answer_fields": answer_names,
+            }
+        )
+    if not question_fields:
+        raise ChaoxingAPIError("learner homework submission form has no question bindings")
+
+    parsed = urlparse(context["endpoint"])
+    context["question_fields"] = question_fields
+    context["public"] = {
+        "form_id": context["form_id"],
+        "form_name": context["form_name"],
+        "method": context["method"],
+        "action": {
+            "host": parsed.netloc,
+            "path": parsed.path,
+            "query_keys": sorted(
+                {key for key, _ in parse_qsl(parsed.query, keep_blank_values=True)}
+            ),
+        },
+        "question_count": len(question_fields),
+        "question_fields": question_fields,
+        "preserves_unmodified_controls": True,
+    }
+    return context
+
+
+def parse_learning_homework_submission_form(
+    html: str,
+    *,
+    base_url: str = MOOC1_BASE_URL,
+) -> dict[str, Any]:
+    """Describe the current learner homework save/submit form without returning values."""
+
+    return _learning_homework_submission_form_context(html, base_url=base_url)["public"]
+
+
+def _learning_homework_question_field(
+    question_fields: list[dict[str, Any]],
+    question_id: str,
+) -> dict[str, Any]:
+    matches = [
+        item for item in question_fields if str(item.get("question_id") or "") == question_id
+    ]
+    if len(matches) != 1:
+        raise ChaoxingAPIError(
+            f"learner homework answer form does not bind question {question_id} exactly once"
+        )
+    return matches[0]
+
+
+def _learning_homework_choice_labels(
+    question: dict[str, Any],
+    answer: Any,
+    *,
+    multiple: bool,
+) -> str:
+    raw_values: list[str]
+    if isinstance(answer, (list, tuple)):
+        raw_values = [str(item).strip() for item in answer]
+    else:
+        raw = str(answer or "").strip()
+        if multiple and re.fullmatch(r"[A-Za-z]+", raw):
+            raw_values = list(raw)
+        elif multiple and ("," in raw or "，" in raw):
+            raw_values = [item.strip() for item in re.split(r"[,，]", raw)]
+        else:
+            raw_values = [raw]
+    raw_values = [item for item in raw_values if item]
+    if not raw_values or (not multiple and len(raw_values) != 1):
+        raise ChaoxingAPIError("choice answer must select the required number of options")
+
+    options = list(question.get("options") or [])
+    labels: list[str] = []
+    for raw in raw_values:
+        normalized = raw.casefold()
+        matches = [
+            str(option.get("label") or "").upper()
+            for option in options
+            if normalized
+            in {
+                str(option.get("label") or "").strip().casefold(),
+                str(option.get("text") or "").strip().casefold(),
+            }
+        ]
+        if len(matches) == 1:
+            label = matches[0]
+        elif re.fullmatch(r"[A-Za-z]", raw):
+            label = raw.upper()
+        else:
+            raise ChaoxingAPIError(f"homework option not found or ambiguous: {raw}")
+        if label not in labels:
+            labels.append(label)
+    if not multiple and len(labels) != 1:
+        raise ChaoxingAPIError("single-choice answer must select exactly one option")
+    option_order = {
+        str(option.get("label") or "").upper(): index for index, option in enumerate(options)
+    }
+    labels.sort(key=lambda label: option_order.get(label, len(option_order)))
+    return "".join(labels)
+
+
+def _learning_homework_true_false_value(answer: Any) -> str:
+    if isinstance(answer, bool):
+        return "true" if answer else "false"
+    normalized = str(answer or "").strip().casefold()
+    if normalized in {"true", "1", "yes", "right", "correct", "对", "正确", "是"}:
+        return "true"
+    if normalized in {"false", "0", "no", "wrong", "incorrect", "错", "错误", "否"}:
+        return "false"
+    raise ChaoxingAPIError("true/false answer must be a boolean or an unambiguous judgment")
+
+
+def _learning_homework_apply_answer_updates(
+    controls: list[tuple[str, str]],
+    questions: list[dict[str, Any]],
+    question_fields: list[dict[str, Any]],
+    updates: list[dict[str, Any]],
+) -> tuple[list[tuple[str, str]], list[dict[str, Any]], dict[str, list[str]]]:
+    if not isinstance(updates, list) or not updates:
+        raise ChaoxingAPIError("at least one learner homework answer update is required")
+    updated_controls = list(controls)
+    applied: list[dict[str, Any]] = []
+    expected: dict[str, list[str]] = {}
+    seen: set[str] = set()
+    for update in updates:
+        if not isinstance(update, dict):
+            raise ChaoxingAPIError("each learner homework answer update must be an object")
+        query = str(update.get("question") or update.get("question_id") or "").strip()
+        question = resolve_homework_question(questions, query)
+        question_id = str(question.get("question_id") or "").strip()
+        if not question_id:
+            raise ChaoxingAPIError(f"homework question {query} has no stable ID")
+        if question_id in seen:
+            raise ChaoxingAPIError(f"homework question updated more than once: {query}")
+        seen.add(question_id)
+        binding = _learning_homework_question_field(question_fields, question_id)
+        type_code = str(binding.get("answer_type_code") or "")
+        answer = update.get("answer")
+        changed: dict[str, list[str]] = {}
+
+        if type_code == "0":
+            value = _learning_homework_choice_labels(question, answer, multiple=False)
+            name = f"answer{question_id}"
+            _set_form_control(updated_controls, name, value)
+            changed[name] = [value]
+        elif type_code == "1":
+            value = _learning_homework_choice_labels(question, answer, multiple=True)
+            name = f"answer{question_id}"
+            _set_form_control(updated_controls, name, value)
+            changed[name] = [value]
+        elif type_code == "2":
+            values = list(answer) if isinstance(answer, (list, tuple)) else [answer]
+            normalized_values = [str(value) for value in values]
+            if not normalized_values:
+                raise ChaoxingAPIError("fill-blank answer must contain at least one blank")
+            prefixes = (f"answerEditor{question_id}", f"answer{question_id}")
+            updated_controls[:] = [
+                (name, value)
+                for name, value in updated_controls
+                if not any(re.fullmatch(rf"{re.escape(prefix)}\d+", name) for prefix in prefixes)
+            ]
+            size_name = f"tiankongsize{question_id}"
+            _set_form_control(updated_controls, size_name, len(normalized_values))
+            changed[size_name] = [str(len(normalized_values))]
+            for index, value in enumerate(normalized_values, 1):
+                name = f"answerEditor{question_id}{index}"
+                _set_form_control(updated_controls, name, value)
+                changed[name] = [value]
+        elif type_code == "3":
+            value = _learning_homework_true_false_value(answer)
+            name = f"answer{question_id}"
+            _set_form_control(updated_controls, name, value)
+            changed[name] = [value]
+        elif type_code in {"4", "6", "8"}:
+            if not isinstance(answer, str):
+                raise ChaoxingAPIError("written homework answer must be text")
+            candidates = [
+                name
+                for name in (f"answer{question_id}", f"answerEditor{question_id}")
+                if _control_values(updated_controls, name)
+            ]
+            name = candidates[0] if candidates else f"answer{question_id}"
+            _set_form_control(updated_controls, name, answer)
+            changed[name] = [answer]
+        elif type_code == "9":
+            values = list(answer) if isinstance(answer, (list, tuple)) else [answer]
+            normalized_values = [str(value) for value in values]
+            if not normalized_values:
+                raise ChaoxingAPIError("programming answer must contain at least one editor value")
+            updated_controls[:] = [
+                (name, value)
+                for name, value in updated_controls
+                if not re.fullmatch(rf"answerEditor{re.escape(question_id)}\d+", name)
+            ]
+            size_name = f"tiankongsize{question_id}"
+            _set_form_control(updated_controls, size_name, len(normalized_values))
+            changed[size_name] = [str(len(normalized_values))]
+            for index, value in enumerate(normalized_values, 1):
+                name = f"answerEditor{question_id}{index}"
+                escaped = escape(value)
+                editor_value = f"<p>{escaped}<br/></p>"
+                _set_form_control(updated_controls, name, editor_value)
+                changed[name] = [editor_value]
+        else:
+            raise ChaoxingAPIError(
+                f"learner homework answer type is not yet writable: {type_code or 'unknown'}"
+            )
+        expected.update(changed)
+        applied.append(
+            {
+                "question": query,
+                "question_index": question.get("index"),
+                "question_id": question_id,
+                "question_type": binding.get("answer_type"),
+                "field_names": sorted(changed),
+            }
+        )
+
+    all_question_ids = [str(item.get("question_id") or "") for item in question_fields]
+    all_question_ids = [question_id for question_id in all_question_ids if question_id]
+    _set_form_control(updated_controls, "answerwqbid", ",".join(all_question_ids) + ",")
+    return updated_controls, applied, expected
+
+
 def parse_learning_materials(html: str) -> list[dict[str, Any]]:
     """Parse one learner course-material folder page."""
 
@@ -21061,7 +21374,7 @@ class ChaoxingAPI:
             ),
         }
 
-    def enter_learning_homework_answer(
+    def _learning_homework_answer_context(
         self,
         course: dict[str, Any],
         homework_query: str,
@@ -21165,7 +21478,7 @@ class ChaoxingAPI:
             "answer_id_in_form": str(form.get("answer_id") or ""),
             "answer_form_detected": True,
         }
-        return {
+        result = {
             **self._learning_course_result(course),
             "homework": self._public_learning_homework(homework),
             "page": {
@@ -21182,6 +21495,293 @@ class ChaoxingAPI:
             "verification": (
                 "reached the learner homework answer form for the selected work through HTTP; "
                 "no answer save or submit request was sent"
+            ),
+        }
+        return {
+            "session": context["session"],
+            "response": response,
+            "html": html,
+            "homework": homework,
+            "after": after,
+            "form": form,
+            "result": result,
+        }
+
+    def enter_learning_homework_answer(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+        *,
+        _detail_context: dict[str, Any] | None = None,
+        _redo_acknowledged: bool = False,
+    ) -> dict[str, Any]:
+        return self._learning_homework_answer_context(
+            course,
+            homework_query,
+            _detail_context=_detail_context,
+            _redo_acknowledged=_redo_acknowledged,
+        )["result"]
+
+    @staticmethod
+    def _learning_homework_submission_url(endpoint: str, *, temporary: bool) -> str:
+        parsed = urlparse(endpoint)
+        pairs = parse_qsl(parsed.query, keep_blank_values=True)
+
+        def set_query(name: str, value: str | None) -> None:
+            nonlocal pairs
+            pairs = [(key, item) for key, item in pairs if key.casefold() != name.casefold()]
+            if value is not None:
+                pairs.append((name, value))
+
+        if not any(key.casefold() in {"formtype", "formtype2"} for key, _ in pairs):
+            set_query("formType", "post")
+        set_query("saveStatus", "1")
+        set_query("version", "1")
+        set_query("tempsave", "1" if temporary else None)
+        return parsed._replace(query=urlencode(pairs, doseq=True)).geturl()
+
+    def _post_learning_homework_form(
+        self,
+        answer_context: dict[str, Any],
+        controls: list[tuple[str, str]],
+        *,
+        temporary: bool,
+    ) -> dict[str, Any]:
+        submission = _learning_homework_submission_form_context(
+            str(answer_context["html"]),
+            base_url=str(answer_context["response"].url),
+        )
+        endpoint = validated_chaoxing_url(
+            self._learning_homework_submission_url(
+                str(submission["endpoint"]), temporary=temporary
+            ),
+            "learner homework save URL" if temporary else "learner homework submit URL",
+        )
+        try:
+            response = answer_context["session"].post(
+                endpoint,
+                data=controls,
+                timeout=max(self.timeout, 60),
+                headers={
+                    "Referer": str(answer_context["response"].url),
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            operation = "save" if temporary else "submit"
+            raise ChaoxingAPIError(
+                f"learner homework {operation} request failed: {type(exc).__name__}"
+            ) from exc
+        validated_chaoxing_url(
+            response.url,
+            "learner homework save final URL" if temporary else "learner homework submit final URL",
+        )
+        body = self._decode(response)
+        if "passport2.chaoxing.com/login" in response.url.casefold() or (
+            "passport2.chaoxing.com/login" in body.casefold()
+        ):
+            raise ChaoxingAPIError("learner homework mutation was redirected to login")
+        try:
+            payload = json.loads(body)
+        except json.JSONDecodeError as exc:
+            raise ChaoxingAPIError("learner homework mutation response was not JSON") from exc
+        status = payload.get("status") if isinstance(payload, dict) else None
+        if str(status).strip().casefold() not in {"1", "true"}:
+            message = payload.get("msg") if isinstance(payload, dict) else ""
+            raise ChaoxingAPIError(str(message or "learner homework mutation was not acknowledged"))
+        final = urlparse(response.url)
+        return {
+            "payload": payload,
+            "request": {
+                "host": final.netloc,
+                "path": final.path,
+                "http_status": response.status_code,
+            },
+            "submission": submission,
+        }
+
+    def save_learning_homework_answers(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+        updates: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        answer_context = self._learning_homework_answer_context(course, homework_query)
+        submission = _learning_homework_submission_form_context(
+            str(answer_context["html"]),
+            base_url=str(answer_context["response"].url),
+        )
+        controls, applied, expected = _learning_homework_apply_answer_updates(
+            list(submission["controls"]),
+            list(answer_context["form"]["questions"]),
+            list(submission["question_fields"]),
+            updates,
+        )
+        _set_form_control(controls, "pyFlag", "1")
+        mutation = self._post_learning_homework_form(
+            answer_context,
+            controls,
+            temporary=True,
+        )
+
+        refreshed = self._learning_homework_answer_context(
+            course,
+            str(answer_context["homework"]["work_id"]),
+        )
+        refreshed_submission = _learning_homework_submission_form_context(
+            str(refreshed["html"]),
+            base_url=str(refreshed["response"].url),
+        )
+        mismatches: list[str] = []
+        for name, expected_values in expected.items():
+            actual_values = _control_values(refreshed_submission["controls"], name)
+            if actual_values == expected_values:
+                continue
+            if len(actual_values) == len(expected_values) and all(
+                html_text(actual) == html_text(wanted)
+                for actual, wanted in zip(actual_values, expected_values, strict=True)
+            ):
+                continue
+            mismatches.append(name)
+        if mismatches:
+            raise ChaoxingAPIError(
+                "learner homework save was acknowledged, but refreshed answers did not match: "
+                + ", ".join(mismatches)
+            )
+        after = refreshed["after"]
+        if str(after.get("status_key") or "") in {"submitted", "completed"}:
+            raise ChaoxingAPIError(
+                "learner homework temporary save unexpectedly changed the submission status"
+            )
+        payload = mutation["payload"]
+        return {
+            **self._learning_course_result(course),
+            "homework": self._public_learning_homework(answer_context["homework"]),
+            "updated_question_count": len(applied),
+            "updated_questions": applied,
+            "server_message": str(payload.get("msg") or ""),
+            "request": mutation["request"],
+            "postcondition": {
+                "status_before": str(answer_context["homework"].get("status") or ""),
+                "status_after": str(after.get("status") or ""),
+                "status_key_after": str(after.get("status_key") or ""),
+                "answer_id_before": str(answer_context["form"].get("answer_id") or ""),
+                "answer_id_after": str(refreshed["form"].get("answer_id") or ""),
+                "updated_fields_match": True,
+                "submitted": False,
+            },
+            "verification": (
+                "Chaoxing acknowledged the temporary save; a fresh answer form contained every "
+                "requested field value, unmodified controls were preserved in the POST, and the "
+                "homework remained unsubmitted"
+            ),
+        }
+
+    def submit_learning_homework(
+        self,
+        course: dict[str, Any],
+        homework_query: str,
+    ) -> dict[str, Any]:
+        answer_context = self._learning_homework_answer_context(course, homework_query)
+        submission = _learning_homework_submission_form_context(
+            str(answer_context["html"]),
+            base_url=str(answer_context["response"].url),
+        )
+        controls = list(submission["controls"])
+        question_ids = [
+            str(item.get("question_id") or "") for item in submission["question_fields"]
+        ]
+        question_ids = [question_id for question_id in question_ids if question_id]
+        _set_form_control(controls, "answerwqbid", ",".join(question_ids) + ",")
+        _set_form_control(controls, "pyFlag", "")
+
+        validation_values = {
+            "courseId": (_control_values(controls, "courseId") or [course.get("course_id")])[0],
+            "classId": (_control_values(controls, "classId") or [course.get("clazz_id")])[0],
+            "cpi": (_control_values(controls, "cpi") or [course.get("cpi")])[0],
+        }
+        missing = [key for key, value in validation_values.items() if not str(value or "").strip()]
+        if missing:
+            raise ChaoxingAPIError(
+                "learner homework submission form lacks validation context: " + ", ".join(missing)
+            )
+        validate_endpoint = validated_chaoxing_url(
+            MOOC1_BASE_URL + "/work/validate",
+            "learner homework validation URL",
+        )
+        try:
+            validation = answer_context["session"].get(
+                validate_endpoint,
+                params=validation_values,
+                timeout=max(self.timeout, 60),
+                headers={
+                    "Referer": str(answer_context["response"].url),
+                    "X-Requested-With": "XMLHttpRequest",
+                },
+            )
+            validation.raise_for_status()
+        except requests.RequestException as exc:
+            raise ChaoxingAPIError(
+                f"learner homework validation request failed: {type(exc).__name__}"
+            ) from exc
+        validated_chaoxing_url(validation.url, "learner homework validation final URL")
+        validation_body = self._decode(validation)
+        if "passport2.chaoxing.com/login" in validation.url.casefold() or (
+            "passport2.chaoxing.com/login" in validation_body.casefold()
+        ):
+            raise ChaoxingAPIError("learner homework validation was redirected to login")
+
+        mutation = self._post_learning_homework_form(
+            answer_context,
+            controls,
+            temporary=False,
+        )
+        after: dict[str, Any] | None = None
+        for attempt in range(3):
+            listed = self.list_learning_homeworks(course)
+            after = resolve_homework(
+                listed["homeworks"],
+                str(answer_context["homework"]["work_id"]),
+            )
+            if str(after.get("status_key") or "") in {"submitted", "completed"}:
+                break
+            if attempt < 2:
+                sleep(0.4)
+        if after is None or str(after.get("status_key") or "") not in {
+            "submitted",
+            "completed",
+        }:
+            raise ChaoxingAPIError(
+                "learner homework submission was acknowledged, but the refreshed list did not "
+                "show a submitted state"
+            )
+        payload = mutation["payload"]
+        validation_final = urlparse(validation.url)
+        return {
+            **self._learning_course_result(course),
+            "homework": self._public_learning_homework(answer_context["homework"]),
+            "submitted_question_count": len(question_ids),
+            "server_message": str(payload.get("msg") or ""),
+            "server_student_status": payload.get("stuStatus"),
+            "validation": {
+                "host": validation_final.netloc,
+                "path": validation_final.path,
+                "http_status": validation.status_code,
+            },
+            "request": mutation["request"],
+            "postcondition": {
+                "status_before": str(answer_context["homework"].get("status") or ""),
+                "status_after": str(after.get("status") or ""),
+                "status_key_after": str(after.get("status_key") or ""),
+                "answer_id_before": str(answer_context["form"].get("answer_id") or ""),
+                "answer_id_after": str(after.get("answer_id") or ""),
+                "submitted": True,
+            },
+            "verification": (
+                "the current answer form was validated and submitted through Chaoxing HTTP; the "
+                "server acknowledged the request and the refreshed homework list showed a "
+                "submitted state"
             ),
         }
 

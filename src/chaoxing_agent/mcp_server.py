@@ -2937,6 +2937,33 @@ async def chaoxing_enter_learning_homework_answer(
 
 
 @mcp.tool()
+async def chaoxing_save_learning_homework_answers(
+    course: str,
+    homework: str,
+    updates: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Update selected questions and temporarily save learner homework without submitting."""
+    return await runtime.execute(
+        "learning.course.homework.answers.save",
+        {"course": course, "homework": homework, "updates": updates},
+    )
+
+
+@mcp.tool()
+async def chaoxing_submit_learning_homework(
+    course: str,
+    homework: str,
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm submitting the learner homework's current saved answers."""
+    return await runtime.execute(
+        "learning.course.homework.submit",
+        {"course": course, "homework": homework},
+        confirmation_token,
+    )
+
+
+@mcp.tool()
 async def chaoxing_redo_learning_homework(
     course: str,
     homework: str,

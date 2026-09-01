@@ -51,6 +51,7 @@ from chaoxing_agent.api import (
     parse_learning_homework_answer_form,
     parse_learning_homework_attempts,
     parse_learning_homework_detail,
+    parse_learning_homework_submission_form,
     parse_learning_materials,
     parse_learning_progress_payload,
     parse_learning_task_entries,
@@ -844,6 +845,47 @@ def test_parse_learner_semantic_pages_without_exposing_session_tokens() -> None:
     assert answer_form["forms"][0]["action"]["query_keys"] == ["enc"]
     assert "secret" not in str(answer_form)
 
+    submission_form = parse_learning_homework_submission_form(
+        """
+        <form method="get" action="https://example.com/search">
+          <input name="query" value="not a homework form">
+        </form>
+        <form id="workForm" method="post"
+              action="https://mooc1.chaoxing.com/work/addStudentWorkNewWeb?token=secret&amp;workid=88">
+          <input type="hidden" name="courseId" value="10">
+          <input type="hidden" name="classId" value="20">
+          <input type="hidden" name="workAnswerId" value="101">
+          <input type="hidden" name="answerwqbid" value="501,502,">
+          <input type="hidden" name="answertype501" value="0">
+          <input type="hidden" name="answer501" value="A">
+          <input type="hidden" name="answertype502" value="4">
+          <textarea name="answer502">已有文字</textarea>
+        </form>
+        """
+    )
+    assert submission_form["method"] == "POST"
+    assert submission_form["action"] == {
+        "host": "mooc1.chaoxing.com",
+        "path": "/work/addStudentWorkNewWeb",
+        "query_keys": ["token", "workid"],
+    }
+    assert submission_form["question_count"] == 2
+    assert submission_form["question_fields"] == [
+        {
+            "question_id": "501",
+            "answer_type_code": "0",
+            "answer_type": "single_choice",
+            "answer_fields": ["answer501"],
+        },
+        {
+            "question_id": "502",
+            "answer_type_code": "4",
+            "answer_type": "short_answer",
+            "answer_fields": ["answer502"],
+        },
+    ]
+    assert "secret" not in str(submission_form)
+
     attempts = parse_learning_homework_attempts(
         """
         <div class="recordTab">
@@ -1122,6 +1164,265 @@ def test_learning_homework_answer_enter_follows_only_explicit_answer_action(monk
     assert result["answer_instance_created"] is True
     assert len(session.calls) == 2
     assert all(call[1]["allow_redirects"] is False for call in session.calls)
+    assert "secret" not in str(result)
+
+
+def test_learning_homework_answer_save_changes_only_requested_fields(monkeypatch) -> None:
+    def answer_html(single_answer: str) -> str:
+        return f"""
+        <input type="hidden" id="courseId" value="10">
+        <input type="hidden" id="classId" value="20">
+        <input type="hidden" id="workId" value="88">
+        <input type="hidden" id="answerId" value="101">
+        <h2 class="mark_title">可作答作业</h2>
+        <form id="workForm" method="post"
+              action="https://mooc1.chaoxing.com/work/addStudentWorkNewWeb?workid=88&amp;token=secret">
+          <input type="hidden" name="courseId" value="10">
+          <input type="hidden" name="classId" value="20">
+          <input type="hidden" name="cpi" value="30">
+          <input type="hidden" name="workAnswerId" value="101">
+          <input type="hidden" name="answerwqbid" value="501,502,">
+          <input type="hidden" name="pyFlag" value="">
+          <div class="mark_item"><h2 class="type_tit">一. 单选题</h2>
+            <div class="questionLi" data="501">
+              <h3 class="mark_name">1. <span class="colorShallow">(单选题)</span>
+                <span class="qtContent">请选择课堂导入方式。</span>
+              </h3>
+              <ul>
+                <li><input type="radio" name="radio501" value="A">A. 讲授</li>
+                <li><input type="radio" name="radio501" value="B">B. 真实问题</li>
+              </ul>
+              <input type="hidden" name="answertype501" value="0">
+              <input type="hidden" name="answer501" value="{single_answer}">
+            </div>
+          </div>
+          <div class="mark_item"><h2 class="type_tit">二. 简答题</h2>
+            <div class="questionLi" data="502">
+              <h3 class="mark_name">2. <span class="colorShallow">(简答题)</span>
+                <span class="qtContent">说明课堂导入。</span>
+              </h3>
+              <input type="hidden" name="answertype502" value="4">
+              <textarea name="answer502">原有文字</textarea>
+            </div>
+          </div>
+          <button type="button" onclick="noSubmit()">暂存</button>
+          <button type="button" onclick="btnBlueSubmit()">提交</button>
+        </form>
+        """
+
+    class Response:
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+
+        def __init__(self, url: str, body: str) -> None:
+            self.url = url
+            self.status_code = 200
+            self.headers = {"Content-Type": "application/json;charset=UTF-8"}
+            self.content = body.encode("utf-8")
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.posts: list[tuple[str, dict]] = []
+
+        def post(self, url: str, **kwargs) -> Response:
+            self.posts.append((url, kwargs))
+            return Response(url, '{"status":true,"msg":"保存成功"}')
+
+    def context(html: str, session: Session) -> dict:
+        page = type(
+            "Page",
+            (),
+            {
+                "url": (
+                    "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork"
+                    "?workId=88&answerId=101&enc=secret"
+                )
+            },
+        )()
+        return {
+            "session": session,
+            "response": page,
+            "html": html,
+            "homework": {
+                "title": "可作答作业",
+                "work_id": "88",
+                "answer_id": "101",
+                "status": "未交",
+                "status_key": "unsubmitted",
+            },
+            "after": {
+                "title": "可作答作业",
+                "work_id": "88",
+                "answer_id": "101",
+                "status": "未交",
+                "status_key": "unsubmitted",
+            },
+            "form": parse_learning_homework_answer_form(html, base_url=page.url),
+            "result": {},
+        }
+
+    session = Session()
+    contexts = iter([context(answer_html("A"), session), context(answer_html("B"), session)])
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(
+        api,
+        "_learning_homework_answer_context",
+        lambda *_args, **_kwargs: next(contexts),
+    )
+    course = {
+        "course_id": "10",
+        "course_name": "Writing",
+        "clazz_id": "20",
+        "cpi": "30",
+    }
+
+    result = api.save_learning_homework_answers(
+        course,
+        "可作答作业",
+        [{"question": "1", "answer": "B"}],
+    )
+
+    assert result["updated_questions"][0]["question_id"] == "501"
+    assert result["postcondition"]["updated_fields_match"] is True
+    assert result["postcondition"]["submitted"] is False
+    endpoint, request = session.posts[0]
+    assert "tempsave=1" in endpoint
+    assert "token=secret" in endpoint
+    data = request["data"]
+    assert ("answer501", "B") in data
+    assert ("answer502", "原有文字") in data
+    assert ("answerwqbid", "501,502,") in data
+    assert ("pyFlag", "1") in data
+    assert "secret" not in str(result)
+
+
+def test_learning_homework_submit_requires_acknowledgement_and_submitted_state(
+    monkeypatch,
+) -> None:
+    answer_html = """
+    <input type="hidden" id="courseId" value="10">
+    <input type="hidden" id="classId" value="20">
+    <input type="hidden" id="workId" value="88">
+    <input type="hidden" id="answerId" value="101">
+    <h2 class="mark_title">可作答作业</h2>
+    <form id="workForm" method="post"
+          action="https://mooc1.chaoxing.com/work/addStudentWorkNewWeb?workid=88&amp;token=secret">
+      <input type="hidden" name="courseId" value="10">
+      <input type="hidden" name="classId" value="20">
+      <input type="hidden" name="cpi" value="30">
+      <input type="hidden" name="workAnswerId" value="101">
+      <input type="hidden" name="answerwqbid" value="501,">
+      <input type="hidden" name="pyFlag" value="1">
+      <div class="questionLi" data="501">
+        <h3 class="mark_name">1. <span class="colorShallow">(简答题)</span>
+          <span class="qtContent">说明课堂导入。</span>
+        </h3>
+        <input type="hidden" name="answertype501" value="4">
+        <textarea name="answer501">已有答案</textarea>
+      </div>
+    </form>
+    """
+
+    class Response:
+        encoding = "utf-8"
+        apparent_encoding = "utf-8"
+
+        def __init__(self, url: str, body: str, content_type: str) -> None:
+            self.url = url
+            self.status_code = 200
+            self.headers = {"Content-Type": content_type}
+            self.content = body.encode("utf-8")
+
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+    class Session:
+        def __init__(self) -> None:
+            self.gets: list[tuple[str, dict]] = []
+            self.posts: list[tuple[str, dict]] = []
+
+        def get(self, url: str, **kwargs) -> Response:
+            self.gets.append((url, kwargs))
+            return Response(url, "ok", "text/plain;charset=UTF-8")
+
+        def post(self, url: str, **kwargs) -> Response:
+            self.posts.append((url, kwargs))
+            return Response(
+                url,
+                '{"status":true,"msg":"提交成功","stuStatus":4}',
+                "application/json;charset=UTF-8",
+            )
+
+    session = Session()
+    page = type(
+        "Page",
+        (),
+        {
+            "url": (
+                "https://mooc1.chaoxing.com/mooc-ans/mooc2/work/dowork"
+                "?workId=88&answerId=101&enc=secret"
+            )
+        },
+    )()
+    form = parse_learning_homework_answer_form(answer_html, base_url=page.url)
+    context = {
+        "session": session,
+        "response": page,
+        "html": answer_html,
+        "homework": {
+            "title": "可作答作业",
+            "work_id": "88",
+            "answer_id": "101",
+            "status": "未交",
+            "status_key": "unsubmitted",
+        },
+        "after": {},
+        "form": form,
+        "result": {},
+    }
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(api, "_learning_homework_answer_context", lambda *_args, **_kwargs: context)
+    monkeypatch.setattr(
+        api,
+        "list_learning_homeworks",
+        lambda _course: {
+            "homeworks": [
+                {
+                    "title": "可作答作业",
+                    "work_id": "88",
+                    "answer_id": "101",
+                    "status": "已交",
+                    "status_key": "submitted",
+                }
+            ]
+        },
+    )
+    course = {
+        "course_id": "10",
+        "course_name": "Writing",
+        "clazz_id": "20",
+        "cpi": "30",
+    }
+
+    result = api.submit_learning_homework(course, "可作答作业")
+
+    assert result["postcondition"]["submitted"] is True
+    assert result["postcondition"]["status_key_after"] == "submitted"
+    assert session.gets[0][0] == "https://mooc1.chaoxing.com/work/validate"
+    assert session.gets[0][1]["params"] == {
+        "courseId": "10",
+        "classId": "20",
+        "cpi": "30",
+    }
+    endpoint, request = session.posts[0]
+    assert "tempsave" not in endpoint
+    assert ("pyFlag", "") in request["data"]
+    assert ("answer501", "已有答案") in request["data"]
     assert "secret" not in str(result)
 
 

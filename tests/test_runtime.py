@@ -235,6 +235,23 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
             }
 
         @staticmethod
+        def save_learning_homework_answers(course, homework, updates):
+            return {
+                "course": course,
+                "homework": {"title": homework},
+                "updated_questions": updates,
+                "postcondition": {"submitted": False},
+            }
+
+        @staticmethod
+        def submit_learning_homework(course, homework):
+            return {
+                "course": course,
+                "homework": {"title": homework},
+                "postcondition": {"submitted": True},
+            }
+
+        @staticmethod
         def redo_learning_homework(course, homework):
             return {
                 "course": course,
@@ -390,6 +407,23 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
         "learning.course.homework.answer.enter",
         {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
     )
+    homework_saved = await runtime.execute(
+        "learning.course.homework.answers.save",
+        {
+            "course": "英语文体与写作",
+            "homework": "BOPPPS 设计",
+            "updates": [{"question": "1", "answer": "真实问题"}],
+        },
+    )
+    submit_preview = await runtime.execute(
+        "learning.course.homework.submit",
+        {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
+    )
+    submit_confirmed = await runtime.execute(
+        "learning.course.homework.submit",
+        {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
+        submit_preview["confirmation"]["token"],
+    )
     redo_preview = await runtime.execute(
         "learning.course.homework.redo",
         {"course": "英语文体与写作", "homework": "BOPPPS 设计"},
@@ -473,6 +507,11 @@ async def test_runtime_dispatches_learning_reads_and_confirms_integrity(monkeypa
     assert homeworks["result"]["homeworks"] == []
     assert homework["result"]["homework"]["title"] == "BOPPPS 设计"
     assert homework_answer["result"]["form"]["answer_form_detected"] is True
+    assert homework_saved["result"]["postcondition"]["submitted"] is False
+    assert homework_saved["result"]["updated_questions"][0]["question"] == "1"
+    assert submit_preview["status"] == "confirmation_required"
+    assert "已交" in submit_preview["confirmation"]["summary"]
+    assert submit_confirmed["result"]["postcondition"]["submitted"] is True
     assert redo_preview["status"] == "confirmation_required"
     assert "覆盖" in redo_preview["confirmation"]["summary"]
     assert redo_confirmed["result"]["answer"]["form"]["answer_form_detected"] is True

@@ -315,6 +315,8 @@ def test_core_actions_are_implemented() -> None:
         "learning.course.discussions.reply.update",
         "learning.course.discussions.reply.delete",
         "learning.course.homeworks.list",
+        "learning.course.homework.answers.save",
+        "learning.course.homework.submit",
         "learning.course.exams.list",
         "learning.course.self_tests.list",
         "learning.course.materials.list",
@@ -385,7 +387,7 @@ def test_report_keeps_observed_separate_from_implemented() -> None:
     report = capability_report()
     counts = report["summary"]["by_state"]
     assert counts["observed"] == 43
-    assert counts["implemented"] == 561
+    assert counts["implemented"] == 563
 
 
 def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None:
