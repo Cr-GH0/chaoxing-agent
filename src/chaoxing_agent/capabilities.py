@@ -5467,6 +5467,7 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         ActionRisk.READ,
         CapabilityState.IMPLEMENTED,
         "http_api",
+        live_verified=True,
         description="获取已完成导出的下载地址，或将文件保存到明确的本地路径。",
         aliases=("下载题库导出文件",),
     ),
