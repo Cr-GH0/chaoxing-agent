@@ -1011,6 +1011,66 @@ async def test_class_activity_recycle_delete_cli_dispatches_confirmation() -> No
     )
 
 
+@pytest.mark.asyncio
+async def test_attendance_and_course_asset_upload_cli_dispatch_confirmation() -> None:
+    class Runtime:
+        def __init__(self) -> None:
+            self.calls = []
+
+        async def execute(self, action, parameters, confirmation_token=None):
+            self.calls.append((action, parameters, confirmation_token))
+            return {"status": "ok"}
+
+    runtime = Runtime()
+    attendance = build_parser().parse_args(
+        [
+            "class-attendance-create",
+            "900000002",
+            "--class",
+            "800000002",
+            "--mode",
+            "code",
+            "--sign-code",
+            "2468",
+            "--duration-minutes",
+            "15",
+            "--confirmation-token",
+            "token-attendance",
+        ]
+    )
+    upload = build_parser().parse_args(
+        [
+            "course-asset-upload",
+            "900000002",
+            "teaching_plan",
+            r"C:\教案\第二单元.docx",
+            "--destination",
+            "第二单元",
+            "--confirmation-token",
+            "token-upload",
+        ]
+    )
+
+    await _run_action(attendance, runtime)
+    await _run_action(upload, runtime)
+
+    assert runtime.calls[0][0] == "class_activities.attendance.create"
+    assert runtime.calls[0][1]["sign_code"] == "2468"
+    assert runtime.calls[0][1]["duration_minutes"] == 15
+    assert runtime.calls[0][2] == "token-attendance"
+    assert runtime.calls[1] == (
+        "course_assets.file.upload",
+        {
+            "course": "900000002",
+            "kind": "teaching_plan",
+            "file_path": r"C:\教案\第二单元.docx",
+            "destination": "第二单元",
+            "name": "",
+        },
+        "token-upload",
+    )
+
+
 def test_personal_note_cli_parses_crud_commands() -> None:
     listing = build_parser().parse_args(["notes", "--search", "考试", "--max-items", "20"])
     reading = build_parser().parse_args(["note-read", "复习计划"])

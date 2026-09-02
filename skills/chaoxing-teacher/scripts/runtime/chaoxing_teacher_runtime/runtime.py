@@ -2831,6 +2831,36 @@ class ActionRuntime:
                     clazz,
                     self._string_list(parameters.get("groups"), "groups"),
                 )
+            if action == "class_activities.attendance.create":
+                return api.create_class_attendance(
+                    course,
+                    clazz,
+                    title=str(parameters.get("title") or ""),
+                    mode=str(parameters.get("mode") or "normal"),
+                    duration_minutes=self._integer(
+                        parameters.get("duration_minutes", 30), "duration_minutes"
+                    ),
+                    manual_end=self._boolean(parameters.get("manual_end", False), "manual_end"),
+                    late_minutes=self._integer(
+                        parameters.get("late_minutes", 10), "late_minutes"
+                    ),
+                    require_photo=self._boolean(
+                        parameters.get("require_photo", False), "require_photo"
+                    ),
+                    qr_refresh_seconds=self._integer(
+                        parameters.get("qr_refresh_seconds", 0), "qr_refresh_seconds"
+                    ),
+                    sign_code=str(parameters.get("sign_code") or ""),
+                    gesture_code=str(parameters.get("gesture_code") or ""),
+                    location_name=str(parameters.get("location_name") or ""),
+                    latitude=parameters.get("latitude", ""),
+                    longitude=parameters.get("longitude", ""),
+                    location_range_m=self._integer(
+                        parameters.get("location_range_m", 500), "location_range_m"
+                    ),
+                    start=self._boolean(parameters.get("start", True), "start"),
+                    group=str(parameters.get("group") or ""),
+                )
             if action == "class_activities.activities.list":
                 activity_type = None
                 if parameters.get("activity_type") is not None:
@@ -2940,6 +2970,15 @@ class ActionRuntime:
                     kind,
                     self._string_list(parameters.get("resources"), "resources"),
                     destination=str(parameters.get("destination") or "").strip(),
+                )
+            if action == "course_assets.file.upload":
+                return api.upload_file_to_course_assets(
+                    course,
+                    clazz,
+                    kind,
+                    self._required(parameters, "file_path"),
+                    destination=str(parameters.get("destination") or "").strip(),
+                    name=str(parameters.get("name") or "").strip(),
                 )
             if action == "course_assets.item.rename":
                 return api.rename_course_asset(
@@ -5606,9 +5645,46 @@ class ActionRuntime:
                 f"在课程 {parameters.get('course')} 的 {parameters.get('kind')} 目录 "
                 f"{parameters.get('parent') or '根目录'} 新建文件夹《{parameters.get('name')}》"
             )
+        if action == "class_activities.attendance.create":
+            mode_labels = {
+                "normal": "普通签到",
+                "ordinary": "普通签到",
+                "普通": "普通签到",
+                "gesture": "手势签到",
+                "手势": "手势签到",
+                "location": "位置签到",
+                "位置": "位置签到",
+                "qr": "二维码签到",
+                "二维码": "二维码签到",
+                "code": "签到码签到",
+                "签到码": "签到码签到",
+            }
+            mode = str(parameters.get("mode") or "normal").strip().lower()
+            manual_end = ActionRuntime._boolean(
+                parameters.get("manual_end", False), "manual_end"
+            )
+            start = ActionRuntime._boolean(parameters.get("start", True), "start")
+            duration = (
+                "手动结束"
+                if manual_end
+                else f"{parameters.get('duration_minutes', 30)} 分钟"
+            )
+            verb = "立即发放" if start else "保存为未开始活动"
+            title = parameters.get("title") or mode_labels.get(mode, mode)
+            return (
+                f"在课程 {parameters.get('course')} 的班级 "
+                f"{parameters.get('clazz') or parameters.get('class') or '当前班级'}"
+                f"{verb}{mode_labels.get(mode, mode)}《{title}》，活动时长 {duration}"
+            )
         if action == "course_assets.cloud_files.import":
             return (
                 f"把个人云盘文件 {parameters.get('resources')} 导入课程 "
+                f"{parameters.get('course')} 的 {parameters.get('kind')} 目录 "
+                f"{parameters.get('destination') or '根目录'}"
+            )
+        if action == "course_assets.file.upload":
+            return (
+                f"把本地文件 {parameters.get('file_path')} 上传到课程 "
                 f"{parameters.get('course')} 的 {parameters.get('kind')} 目录 "
                 f"{parameters.get('destination') or '根目录'}"
             )

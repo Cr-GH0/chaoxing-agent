@@ -33720,6 +33720,269 @@ class ChaoxingAPI:
             raise ChaoxingAPIError(f"{label} must contain 1-200 characters")
         return normalized
 
+    @staticmethod
+    def _attendance_mode(mode: str) -> tuple[str, int, str]:
+        aliases = {
+            "normal": "normal",
+            "ordinary": "normal",
+            "普通": "normal",
+            "普通签到": "normal",
+            "gesture": "gesture",
+            "pattern": "gesture",
+            "手势": "gesture",
+            "手势签到": "gesture",
+            "location": "location",
+            "位置": "location",
+            "位置签到": "location",
+            "qr": "qr",
+            "qrcode": "qr",
+            "二维码": "qr",
+            "二维码签到": "qr",
+            "code": "code",
+            "sign_code": "code",
+            "签到码": "code",
+            "签到码签到": "code",
+        }
+        normalized = str(mode or "normal").strip().lower()
+        key = aliases.get(normalized)
+        if key is None:
+            raise ChaoxingAPIError(
+                "attendance mode must be normal, gesture, location, qr, or code"
+            )
+        definitions = {
+            "normal": (0, "普通签到"),
+            "gesture": (3, "手势签到"),
+            "location": (4, "位置签到"),
+            "qr": (2, "二维码签到"),
+            "code": (5, "签到码签到"),
+        }
+        other_id, default_title = definitions[key]
+        return key, other_id, default_title
+
+    def create_class_attendance(
+        self,
+        course: dict[str, Any],
+        clazz: dict[str, Any],
+        *,
+        title: str = "",
+        mode: str = "normal",
+        duration_minutes: int = 30,
+        manual_end: bool = False,
+        late_minutes: int = 10,
+        require_photo: bool = False,
+        qr_refresh_seconds: int = 0,
+        sign_code: str = "",
+        gesture_code: str = "",
+        location_name: str = "",
+        latitude: str | float = "",
+        longitude: str | float = "",
+        location_range_m: int = 500,
+        start: bool = True,
+        group: str = "",
+    ) -> dict[str, Any]:
+        mode_key, other_id, default_title = self._attendance_mode(mode)
+        normalized_title = self._validate_class_activity_name(
+            title or default_title, "attendance title"
+        )
+        try:
+            duration_value = int(duration_minutes)
+            late_value = int(late_minutes)
+            refresh_value = int(qr_refresh_seconds)
+            range_value = int(location_range_m)
+        except (TypeError, ValueError) as exc:
+            raise ChaoxingAPIError(
+                "attendance duration, late window, QR refresh, and location range must be integers"
+            ) from exc
+        if not manual_end and duration_value <= 0:
+            raise ChaoxingAPIError("attendance duration must be a positive number of minutes")
+        if not 0 <= late_value <= 60:
+            raise ChaoxingAPIError("attendance late window must be between 0 and 60 minutes")
+        if refresh_value not in {0, 5, 8, 10, 20, 30}:
+            raise ChaoxingAPIError(
+                "QR refresh seconds must be 0, 5, 8, 10, 20, or 30"
+            )
+        if refresh_value and mode_key != "qr":
+            raise ChaoxingAPIError("QR refresh is available only for QR-code attendance")
+
+        code = ""
+        if mode_key == "gesture":
+            code = str(gesture_code or sign_code or "").strip()
+            if len(code) < 4:
+                raise ChaoxingAPIError(
+                    "gesture attendance requires a pattern with at least 4 points"
+                )
+        elif mode_key == "code":
+            code = str(sign_code or "").strip()
+            if not re.fullmatch(r"\d{4,8}", code):
+                raise ChaoxingAPIError("attendance code must contain 4-8 digits")
+        elif mode_key == "qr" and refresh_value:
+            code = uuid4().hex[:6].upper()
+
+        location_values = (
+            str(location_name or "").strip(),
+            str(latitude if latitude is not None else "").strip(),
+            str(longitude if longitude is not None else "").strip(),
+        )
+        location_requested = any(location_values)
+        if location_requested and mode_key == "normal":
+            raise ChaoxingAPIError(
+                "ordinary attendance does not expose location restriction; use location mode"
+            )
+        if mode_key == "location" and not all(location_values):
+            raise ChaoxingAPIError(
+                "location attendance requires location_name, latitude, and longitude"
+            )
+        if location_requested and not all(location_values):
+            raise ChaoxingAPIError(
+                "location restriction requires location_name, latitude, and longitude together"
+            )
+        if location_requested:
+            try:
+                latitude_value = float(location_values[1])
+                longitude_value = float(location_values[2])
+            except ValueError as exc:
+                raise ChaoxingAPIError("attendance latitude and longitude must be numeric") from exc
+            if not -90 <= latitude_value <= 90 or not -180 <= longitude_value <= 180:
+                raise ChaoxingAPIError(
+                    "attendance latitude or longitude is outside its valid range"
+                )
+            if not 1 <= range_value <= 2000:
+                raise ChaoxingAPIError(
+                    "attendance location range must be between 1 and 2000 metres"
+                )
+
+        context = self._class_activity_context(course, clazz)
+        before = self._class_activity_listing(context)
+        before_ids = {item["activity_id"] for item in before["activities"]}
+        selected_group: dict[str, Any] | None = None
+        if not start:
+            if str(group or "").strip():
+                selected_group = self._resolve_class_activity_group(before["groups"], group)
+            else:
+                selected_group = next(
+                    (item for item in before["groups"] if item.get("is_default")),
+                    before["groups"][0] if before["groups"] else None,
+                )
+            if selected_group is None:
+                raise ChaoxingAPIError(
+                    "saving attendance requires an activity group, but none was available"
+                )
+
+        payload = self._class_activity_json_request(
+            context,
+            "/v2/apis/sign/saveOrBegin",
+            "attendance creation",
+            method="POST",
+            data={
+                "now": 1 if start else 0,
+                "courseId": course["course_id"],
+                "otherId": other_id,
+                "title": normalized_title,
+                "timeLong": -1 if manual_end else duration_value * 60 * 1000,
+                "planId": selected_group["group_id"] if selected_group else "",
+                "activeId": 0,
+                "classId": clazz["clazz_id"],
+                "isresult": 0,
+                "isCourseware": 0,
+                "ifphoto": 1 if require_photo else 0,
+                "ifrefreshewm": 1 if refresh_value else 0,
+                "ewmRefreshTime": refresh_value or 10,
+                "signCode": code,
+                "classroomDataId": "",
+                "picId": 0,
+                "classroomPlanId": "",
+                "pageNum": "",
+                "pageId": "",
+                "timerCron": "",
+                "dateCron": "",
+                "isTeachingCalendar": 0,
+                "fromtype": "",
+                "ifopenAddress": 1 if location_requested else 0,
+                "locationText": location_values[0] if location_requested else "",
+                "locationLatitude": location_values[1] if location_requested else "",
+                "locationLongitude": location_values[2] if location_requested else "",
+                "locationRange": f"{range_value}米" if location_requested else "",
+                "ifSkipWeek": 0,
+                "validity_begintime": "",
+                "validity_endtime": "",
+                "disposable_publishtime": "",
+                "ifSendToOtherClass": 0,
+                "sendToOtherClassList": "",
+                "onlyAttendForCurrentClass": 0,
+                "fyktBigClassChatId": "",
+                "isTeachingPlanLibrary": 0,
+                "ifNeedVCode": 0,
+                "lateMinute": late_value,
+                "openSignOutFlag": 0,
+                "signOutRelativeTime": "",
+                "signOutAbsoluteTime": "",
+                "signOutDuration": "",
+                "fykbParas": "",
+                "openCheckFaceFlag": 0,
+                "openCheckWeChatFlag": 0,
+                "knowledgePoints": "",
+            },
+        )
+        self._class_activity_ack(payload, "attendance creation")
+        response_data = payload.get("data")
+        if isinstance(response_data, dict):
+            active_id = str(
+                response_data.get("activeId")
+                or response_data.get("_activeId")
+                or response_data.get("id")
+                or ""
+            )
+        else:
+            active_id = str(response_data or "")
+
+        expected_status = 1 if start else 0
+        created: list[dict[str, Any]] = []
+        for attempt in range(7):
+            refreshed = self._class_activity_listing(context)["activities"]
+            if active_id:
+                created = [item for item in refreshed if item["activity_id"] == active_id]
+            else:
+                created = [
+                    item
+                    for item in refreshed
+                    if item["activity_id"] not in before_ids
+                    and item["activity_type"] == 2
+                    and item["name"] == normalized_title
+                ]
+            if len(created) == 1 and created[0]["status"] == expected_status:
+                break
+            if attempt < 6:
+                sleep(0.5)
+        if len(created) != 1:
+            raise ChaoxingAPIError(
+                "server acknowledged attendance creation, but one new activity was not found"
+            )
+        if created[0]["status"] != expected_status:
+            raise ChaoxingAPIError(
+                "attendance appeared after creation, but its refreshed state did not match"
+            )
+        return {
+            "course_id": course["course_id"],
+            "clazz_id": clazz["clazz_id"],
+            "activity": created[0],
+            "started": bool(start),
+            "group": selected_group,
+            "settings": {
+                "mode": mode_key,
+                "mode_id": other_id,
+                "duration_minutes": None if manual_end else duration_value,
+                "manual_end": bool(manual_end),
+                "late_minutes": late_value,
+                "require_photo": bool(require_photo),
+                "qr_refresh_seconds": refresh_value,
+                "location_restricted": location_requested,
+            },
+            "verification": (
+                f"created attendance {created[0]['activity_id']} and re-read status "
+                f"{created[0]['status_label']} from the class activity list"
+            ),
+        }
+
     def create_class_activity_group(
         self, course: dict[str, Any], clazz: dict[str, Any], name: str
     ) -> dict[str, Any]:
@@ -35033,6 +35296,117 @@ class ChaoxingAPI:
             "server_data": payload.get("data"),
             "verification": (
                 f"imported and re-read {len(selected)} cloud files in {context['kind']}"
+            ),
+        }
+
+    def upload_file_to_course_assets(
+        self,
+        course: dict[str, Any],
+        clazz: dict[str, Any],
+        kind: str,
+        file_path: str | Path,
+        *,
+        destination: str = "",
+        name: str = "",
+    ) -> dict[str, Any]:
+        path = Path(file_path).expanduser().resolve()
+        asset_name = self._validate_course_asset_name(name or path.name)
+        context = self._course_asset_context(course, clazz, kind)
+        tree = self._course_asset_tree_from_context(context, course, clazz)
+        target: dict[str, Any] = {
+            "asset_id": "0",
+            "name": "根目录",
+            "path": "",
+            "depth": 0,
+            "is_folder": True,
+        }
+        if str(destination or "").strip():
+            target = self._resolve_course_asset(tree, destination, require_folder=True)
+        before = self._course_asset_direct_items(context, course, clazz, target)
+        before_ids = {item["asset_id"] for item in before}
+
+        resource_context = self._resource_context(context["session"], course, clazz)
+        uploaded = self._upload_local_file_object(resource_context, path)
+        object_id = uploaded["object_id"]
+        params = (
+            {"DB_STRATEGY": "COURSEID", "STRATEGY_PARA": "courseId"}
+            if context["kind"] == "teaching_plan"
+            else None
+        )
+        try:
+            payload = self._course_asset_json_request(
+                context,
+                context["config"]["cloud_import_path"],
+                f"{context['kind']} local-file registration",
+                method="POST",
+                params=params,
+                data={
+                    "courseId": course["course_id"],
+                    "parentFolderId": target["asset_id"],
+                    "pptData": json.dumps(
+                        [
+                            {
+                                "suffix": uploaded["suffix"],
+                                "objectId": object_id,
+                                "name": asset_name,
+                                "size": uploaded["byte_count"],
+                            }
+                        ],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                },
+            )
+        except ChaoxingAPIError as exc:
+            raise ChaoxingAPIError(
+                f"{exc}; uploaded bytes remain in the account cloud disk as object {object_id}"
+            ) from exc
+
+        imported: list[dict[str, Any]] = []
+        for attempt in range(7):
+            after = self._course_asset_direct_items(context, course, clazz, target)
+            imported = [
+                item
+                for item in after
+                if item["asset_id"] not in before_ids
+                and (item.get("object_id") == object_id or item["name"] == asset_name)
+            ]
+            if len(imported) == 1:
+                break
+            if attempt < 6:
+                sleep(0.5)
+        if len(imported) != 1:
+            raise ChaoxingAPIError(
+                "file bytes were uploaded and accepted for the course asset, "
+                "but exactly one new matching item was not found"
+            )
+
+        cloud_resource: dict[str, Any] | None = None
+        cloud_warning = ""
+        try:
+            cloud_resource = self._find_active_cloud_disk_item_by_object_id(
+                context["session"], object_id=object_id, name=asset_name
+            )
+        except ChaoxingAPIError as exc:
+            cloud_warning = str(exc)
+        return {
+            "course_id": course["course_id"],
+            "clazz_id": clazz["clazz_id"],
+            "kind": context["kind"],
+            "destination": target,
+            "asset": imported[0],
+            "local_file": str(path),
+            "byte_count": uploaded["byte_count"],
+            "object_id": object_id,
+            "server_data": payload.get("data"),
+            "cloud_resource": cloud_resource,
+            "cloud_side_effect": (
+                "Chaoxing also stored the uploaded bytes in the account cloud disk"
+            ),
+            "cloud_warning": cloud_warning,
+            "verification": (
+                f"uploaded local file and re-read {context['kind']} asset "
+                f"{imported[0]['asset_id']} with object {object_id}"
             ),
         }
 
@@ -38052,34 +38426,19 @@ class ChaoxingAPI:
             ),
         }
 
-    def upload_resource_file(
+    def _upload_local_file_object(
         self,
-        course: dict[str, Any],
-        clazz: dict[str, Any],
+        context: dict[str, Any],
         file_path: str | Path,
-        *,
-        parent: str = "",
-        name: str = "",
     ) -> dict[str, Any]:
         path = Path(file_path).expanduser().resolve()
         if not path.exists() or not path.is_file():
             raise ChaoxingAPIError(f"upload file does not exist: {path}")
         if not path.suffix:
             raise ChaoxingAPIError("Chaoxing requires an uploaded file to have an extension")
-        if path.stat().st_size > 1024 * 1024 * 1024:
-            raise ChaoxingAPIError("Chaoxing limits each ordinary resource upload to 1 GB")
-        resource_name = self._validate_resource_name(name or path.name)
-        session = self._session()
-        context = self._resource_context(session, course, clazz)
-        destination = self._resolve_resource_parent(context, course, clazz, parent)
-        before = self._resource_folder_items(
-            context,
-            course,
-            clazz,
-            folder_id=str(destination["data_id"]),
-            folder_name=str(destination["name"]),
-        )
-        before_ids = {str(item["data_id"]) for item in before}
+        byte_count = path.stat().st_size
+        if byte_count > 1024 * 1024 * 1024:
+            raise ChaoxingAPIError("Chaoxing limits each ordinary file upload to 1 GB")
         upload_match = re.search(
             r"var\s+commonUploadUrl\s*=\s*ServerHost\.uploadDomain\s*\+\s*['\"]([^'\"]+)",
             context["root_html"],
@@ -38101,7 +38460,7 @@ class ChaoxingAPI:
         content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         try:
             with path.open("rb") as stream:
-                upload_response = session.post(
+                upload_response = context["session"].post(
                     upload_url,
                     data={"source": "1"},
                     files={"file": (path.name, stream, content_type)},
@@ -38109,14 +38468,49 @@ class ChaoxingAPI:
                     headers={"Referer": context["root_url"]},
                 )
             upload_response.raise_for_status()
-            uploaded = self._resource_json(upload_response, "resource file upload")
+            uploaded = self._resource_json(upload_response, "local file upload")
         except (OSError, requests.RequestException) as exc:
-            raise ChaoxingAPIError(f"resource file upload failed: {exc}") from exc
+            raise ChaoxingAPIError(f"local file upload failed: {exc}") from exc
         if str(uploaded.get("state") or "").upper() != "SUCCESS":
             raise ChaoxingAPIError(str(uploaded.get("state") or "Chaoxing rejected the upload"))
         object_id = str(uploaded.get("url") or uploaded.get("objectId") or "")
         if not object_id:
             raise ChaoxingAPIError("upload succeeded but did not return a resource object ID")
+        return {
+            "path": path,
+            "object_id": object_id,
+            "byte_count": byte_count,
+            "suffix": str(uploaded.get("fileType") or path.suffix.lstrip(".")).lstrip("."),
+            "content_type": content_type,
+            "file_real_type": str(uploaded.get("fileRealType") or ""),
+            "server": uploaded,
+        }
+
+    def upload_resource_file(
+        self,
+        course: dict[str, Any],
+        clazz: dict[str, Any],
+        file_path: str | Path,
+        *,
+        parent: str = "",
+        name: str = "",
+    ) -> dict[str, Any]:
+        session = self._session()
+        context = self._resource_context(session, course, clazz)
+        path = Path(file_path).expanduser().resolve()
+        resource_name = self._validate_resource_name(name or path.name)
+        destination = self._resolve_resource_parent(context, course, clazz, parent)
+        before = self._resource_folder_items(
+            context,
+            course,
+            clazz,
+            folder_id=str(destination["data_id"]),
+            folder_name=str(destination["name"]),
+        )
+        before_ids = {str(item["data_id"]) for item in before}
+        uploaded_object = self._upload_local_file_object(context, path)
+        uploaded = uploaded_object["server"]
+        object_id = uploaded_object["object_id"]
         registration = self._add_resource_record(
             context,
             course,
@@ -38126,12 +38520,12 @@ class ChaoxingAPI:
                 "rootId": destination["data_id"],
                 "dataName": resource_name,
                 "source": "1",
-                "dataSize": uploaded.get("fileSize", path.stat().st_size),
-                "dataType": uploaded.get("fileType", path.suffix.lstrip(".")),
+                "dataSize": uploaded.get("fileSize", uploaded_object["byte_count"]),
+                "dataType": uploaded_object["suffix"],
                 "objectId": object_id,
                 "courseName": course["course_name"],
                 "isOpen": "0",
-                "dataRealType": uploaded.get("fileRealType", ""),
+                "dataRealType": uploaded_object["file_real_type"],
             },
         )
         refreshed = self._resource_folder_items(
@@ -38168,7 +38562,7 @@ class ChaoxingAPI:
             "parent": destination,
             "resource": created[0],
             "local_file": str(path),
-            "byte_count": path.stat().st_size,
+            "byte_count": uploaded_object["byte_count"],
             "server_key": str(registration.get("key") or ""),
             "cloud_resource": cloud_resource,
             "cloud_side_effect": (

@@ -145,6 +145,7 @@ def test_core_actions_are_implemented() -> None:
         "class_activities.group.rename",
         "class_activities.group.delete",
         "class_activities.groups.reorder",
+        "class_activities.attendance.create",
         "class_activities.activities.list",
         "class_activities.activity.read",
         "class_activities.activity.rename",
@@ -349,6 +350,7 @@ def test_core_actions_are_implemented() -> None:
         "course_assets.tree.list",
         "course_assets.folder.create",
         "course_assets.cloud_files.import",
+        "course_assets.file.upload",
         "course_assets.item.rename",
         "course_assets.item.top_status.update",
         "course_assets.items.move",
@@ -387,7 +389,7 @@ def test_report_keeps_observed_separate_from_implemented() -> None:
     report = capability_report()
     counts = report["summary"]["by_state"]
     assert counts["observed"] == 43
-    assert counts["implemented"] == 563
+    assert counts["implemented"] == 565
 
 
 def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None:
@@ -609,3 +611,5 @@ def test_live_verification_distinguishes_supported_cloud_actions_from_limited_co
     assert ACTION_BY_NAME["learning.course.homework.attempt.read"].live_verified is False
     assert ACTION_BY_NAME["learning.course.homework.answer.enter"].live_verified is False
     assert ACTION_BY_NAME["learning.course.homework.redo"].live_verified is False
+    assert ACTION_BY_NAME["class_activities.attendance.create"].live_verified is False
+    assert ACTION_BY_NAME["course_assets.file.upload"].live_verified is False

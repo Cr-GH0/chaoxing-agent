@@ -4057,6 +4057,19 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         aliases=("查看班级活动", "课堂活动列表"),
     ),
     ActionSpec(
+        "class_activities.attendance.create",
+        "新建签到活动",
+        "class_activities",
+        ActionRisk.PUBLISH,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description=(
+            "新建普通、手势、位置、二维码或签到码签到；可立即发放或保存为未开始活动，"
+            "并按服务器返回 ID 回读状态。"
+        ),
+        aliases=("发起签到", "创建签到", "新建签到"),
+    ),
+    ActionSpec(
         "class_activities.activity.read",
         "读取班级活动详情",
         "class_activities",
@@ -4203,6 +4216,19 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
             "按云盘文件稳定 ID 将一个或多个文件导入指定课件或教案目录，并核验新的课程资产 ID。"
         ),
         aliases=("云盘导入课件", "云盘导入教案"),
+    ),
+    ActionSpec(
+        "course_assets.file.upload",
+        "上传本地文件到课件或教案",
+        "course_assets",
+        ActionRisk.PUBLISH,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        description=(
+            "把 Agent 所在电脑的本地文件直接上传到指定课件或教案目录，"
+            "并按上传对象 ID 回读新课程资产。"
+        ),
+        aliases=("本地文件上传教案", "直接上传课件", "上传电脑文件到教案"),
     ),
     ActionSpec(
         "course_assets.item.rename",
@@ -6315,7 +6341,7 @@ def capability_report() -> dict[str, Any]:
     return {
         "status": "ok",
         "scope": (
-            "current teacher, learner, and personal-space web surfaces observed through 2026-09-01"
+            "current teacher, learner, and personal-space web surfaces observed through 2026-09-02"
         ),
         "summary": {
             "total": len(ACTION_CATALOG),

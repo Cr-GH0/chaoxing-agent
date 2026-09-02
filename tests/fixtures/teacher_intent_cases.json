@@ -116,15 +116,13 @@
     "domain": "class_activities",
     "operation": ["发起", "新建"],
     "keywords": ["签到活动"],
-    "expected_status": "not_implemented",
-    "expected_gap": "class_attendance_create_not_implemented"
+    "expected_action": "class_activities.attendance.create"
   },
   {
     "request": "把桌面的讲义直接上传到课件栏目",
     "domain": "course_assets",
     "operation": ["上传"],
     "keywords": ["本地文件", "课件"],
-    "expected_status": "not_implemented",
-    "expected_gap": "local_course_asset_upload_not_implemented"
+    "expected_action": "course_assets.file.upload"
   }
 ]

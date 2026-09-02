@@ -2792,6 +2792,31 @@ def build_parser() -> argparse.ArgumentParser:
     activity_group_reorder.add_argument("groups", nargs="+")
     activity_group_reorder.add_argument("--class", dest="clazz")
 
+    attendance_create = sub.add_parser(
+        "class-attendance-create",
+        help="preview or confirm creating and optionally starting an attendance activity",
+    )
+    attendance_create.add_argument("course")
+    attendance_create.add_argument(
+        "--mode", choices=("normal", "gesture", "location", "qr", "code"), default="normal"
+    )
+    attendance_create.add_argument("--title", default="")
+    attendance_create.add_argument("--duration-minutes", type=int, default=30)
+    attendance_create.add_argument("--manual-end", action="store_true")
+    attendance_create.add_argument("--late-minutes", type=int, default=10)
+    attendance_create.add_argument("--require-photo", action="store_true")
+    attendance_create.add_argument("--qr-refresh-seconds", type=int, default=0)
+    attendance_create.add_argument("--sign-code", default="")
+    attendance_create.add_argument("--gesture-code", default="")
+    attendance_create.add_argument("--location-name", default="")
+    attendance_create.add_argument("--latitude")
+    attendance_create.add_argument("--longitude")
+    attendance_create.add_argument("--location-range-m", type=int, default=500)
+    attendance_create.add_argument("--save", action="store_true")
+    attendance_create.add_argument("--group", default="")
+    attendance_create.add_argument("--class", dest="clazz")
+    attendance_create.add_argument("--confirmation-token")
+
     activities = sub.add_parser("class-activities", help="list or filter class activities")
     activities.add_argument("course")
     activities.add_argument("--class", dest="clazz")
@@ -2913,6 +2938,18 @@ def build_parser() -> argparse.ArgumentParser:
     course_asset_cloud_import.add_argument("--class", dest="clazz")
     course_asset_cloud_import.add_argument("--destination", default="")
     course_asset_cloud_import.add_argument("--confirmation-token")
+
+    course_asset_upload = sub.add_parser(
+        "course-asset-upload",
+        help="preview or confirm uploading a local file into courseware or teaching plans",
+    )
+    course_asset_upload.add_argument("course")
+    course_asset_upload.add_argument("kind", choices=("courseware", "teaching_plan"))
+    course_asset_upload.add_argument("file_path")
+    course_asset_upload.add_argument("--class", dest="clazz")
+    course_asset_upload.add_argument("--destination", default="")
+    course_asset_upload.add_argument("--name", default="")
+    course_asset_upload.add_argument("--confirmation-token")
 
     course_asset_rename = sub.add_parser(
         "course-asset-rename", help="rename a courseware or teaching-plan item"
@@ -7280,6 +7317,32 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
         if args.clazz:
             params["clazz"] = args.clazz
         return await runtime.execute("class_activities.groups.reorder", params)
+    if args.command == "class-attendance-create":
+        params = {
+            "course": args.course,
+            "mode": args.mode,
+            "title": args.title,
+            "duration_minutes": args.duration_minutes,
+            "manual_end": args.manual_end,
+            "late_minutes": args.late_minutes,
+            "require_photo": args.require_photo,
+            "qr_refresh_seconds": args.qr_refresh_seconds,
+            "sign_code": args.sign_code,
+            "gesture_code": args.gesture_code,
+            "location_name": args.location_name,
+            "latitude": args.latitude or "",
+            "longitude": args.longitude or "",
+            "location_range_m": args.location_range_m,
+            "start": not args.save,
+            "group": args.group,
+        }
+        if args.clazz:
+            params["clazz"] = args.clazz
+        return await runtime.execute(
+            "class_activities.attendance.create",
+            params,
+            confirmation_token=args.confirmation_token,
+        )
     if args.command == "class-activities":
         params = {
             "course": args.course,
@@ -7416,6 +7479,21 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
             params["clazz"] = args.clazz
         return await runtime.execute(
             "course_assets.cloud_files.import",
+            params,
+            confirmation_token=args.confirmation_token,
+        )
+    if args.command == "course-asset-upload":
+        params = {
+            "course": args.course,
+            "kind": args.kind,
+            "file_path": args.file_path,
+            "destination": args.destination,
+            "name": args.name,
+        }
+        if args.clazz:
+            params["clazz"] = args.clazz
+        return await runtime.execute(
+            "course_assets.file.upload",
             params,
             confirmation_token=args.confirmation_token,
         )

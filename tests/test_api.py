@@ -10483,6 +10483,95 @@ def test_course_asset_cloud_import_http_contract(monkeypatch) -> None:
     }
 
 
+def test_local_file_upload_to_teaching_plan_uses_upload_then_plan_registration(
+    monkeypatch, tmp_path
+) -> None:
+    course = {"course_id": "course-1", "course_name": "Course", "cpi": "cpi-1"}
+    clazz = {"clazz_id": "class-1", "clazz_name": "Class"}
+    source = tmp_path / "Unit 2.docx"
+    source.write_bytes(b"teaching-plan-bytes")
+    imported = {
+        "index": 1,
+        "asset_id": "301",
+        "name": "Unit 2.docx",
+        "title": "Unit 2.docx",
+        "kind": "teaching_plan",
+        "type_code": 8,
+        "asset_type": "document",
+        "is_folder": False,
+        "parent_id": "0",
+        "parent_name": "根目录",
+        "path": "Unit 2.docx",
+        "depth": 1,
+        "object_id": "object-local-1",
+        "suffix": "docx",
+    }
+    session = ResourceSession(
+        [
+            ResourceResponse(
+                {
+                    "state": "SUCCESS",
+                    "url": "object-local-1",
+                    "fileSize": source.stat().st_size,
+                    "fileType": "docx",
+                    "fileRealType": (
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    ),
+                }
+            ),
+            ResourceResponse({"result": 1, "data": [{"id": 301}]}),
+        ]
+    )
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    monkeypatch.setattr(
+        api,
+        "_course_asset_context",
+        lambda *args: course_asset_context(session, "teaching_plan"),
+    )
+    monkeypatch.setattr(api, "_course_asset_tree_from_context", lambda *args: [])
+    upload_context = resource_context(session)
+    upload_context["root_html"] = (
+        "var commonUploadUrl = ServerHost.uploadDomain + "
+        "'/upload/uploadNew?t=1&enc2=abc&userId=2';"
+    )
+    monkeypatch.setattr(api, "_resource_context", lambda *args: upload_context)
+    monkeypatch.setattr(
+        api, "_find_active_cloud_disk_item_by_object_id", lambda *args, **kwargs: None
+    )
+    direct_reads = iter([[], [imported]])
+    monkeypatch.setattr(
+        api,
+        "_course_asset_direct_items",
+        lambda *args, **kwargs: next(direct_reads),
+    )
+
+    result = api.upload_file_to_course_assets(
+        course,
+        clazz,
+        "teaching_plan",
+        source,
+    )
+
+    assert result["asset"]["asset_id"] == "301"
+    assert result["object_id"] == "object-local-1"
+    assert session.calls[0][1].startswith(
+        "https://mooc1.chaoxing.com/upload-ans/upload/uploadNew"
+    )
+    assert session.calls[1][1].endswith("/widget/teachingPlan/createTeachPlanFileCommon")
+    assert session.calls[1][2]["params"] == {
+        "DB_STRATEGY": "COURSEID",
+        "STRATEGY_PARA": "courseId",
+    }
+    assert json.loads(session.calls[1][2]["data"]["pptData"]) == [
+        {
+            "suffix": "docx",
+            "objectId": "object-local-1",
+            "name": "Unit 2.docx",
+            "size": source.stat().st_size,
+        }
+    ]
+
+
 def test_cloud_disk_list_and_delete_http_contracts(monkeypatch) -> None:
     context_html = """
     <script>

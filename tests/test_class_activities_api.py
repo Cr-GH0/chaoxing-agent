@@ -180,6 +180,129 @@ def test_create_class_activity_group_accepts_object_id_and_fresh_verifies(monkey
     assert result["group"]["group_id"] == "22"
 
 
+def test_create_attendance_uses_current_sign_contract_and_reloads_started_activity(
+    monkeypatch,
+) -> None:
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    context = {"common": {"fid": "23080"}}
+    default = _group("1", "默认分组", clazz_id=None, sort=0, is_default=True)
+    created = _activity(
+        "201",
+        "普通签到",
+        group_id="1",
+        group_name="默认分组",
+        status=1,
+        status_label="ongoing",
+    )
+    states = iter(
+        [
+            {"groups": [default], "activities": []},
+            {"groups": [default], "activities": [created]},
+        ]
+    )
+    request: dict[str, object] = {}
+    monkeypatch.setattr(api, "_class_activity_context", lambda *_args: context)
+    monkeypatch.setattr(api, "_class_activity_listing", lambda _context: next(states))
+
+    def request_json(_context, path, _operation, **kwargs):
+        request.update({"path": path, **kwargs})
+        return {"result": 1, "data": "201"}
+
+    monkeypatch.setattr(api, "_class_activity_json_request", request_json)
+
+    result = api.create_class_attendance(COURSE, CLAZZ)
+
+    assert request["path"] == "/v2/apis/sign/saveOrBegin"
+    assert request["method"] == "POST"
+    assert request["data"]["now"] == 1
+    assert request["data"]["otherId"] == 0
+    assert request["data"]["title"] == "普通签到"
+    assert request["data"]["timeLong"] == 30 * 60 * 1000
+    assert request["data"]["lateMinute"] == 10
+    assert result["activity"]["activity_id"] == "201"
+    assert result["activity"]["status_label"] == "ongoing"
+
+
+def test_create_saved_code_attendance_uses_default_group_and_validates_code(monkeypatch) -> None:
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+    context = {"common": {"fid": "23080"}}
+    default = _group("1", "默认分组", clazz_id=None, sort=0, is_default=True)
+    created = _activity(
+        "202",
+        "课堂签到",
+        group_id="1",
+        group_name="默认分组",
+        other_id="5",
+    )
+    states = iter(
+        [
+            {"groups": [default], "activities": []},
+            {"groups": [default], "activities": [created]},
+        ]
+    )
+    request: dict[str, object] = {}
+    monkeypatch.setattr(api, "_class_activity_context", lambda *_args: context)
+    monkeypatch.setattr(api, "_class_activity_listing", lambda _context: next(states))
+
+    def request_json(_context, path, _operation, **kwargs):
+        request.update({"path": path, **kwargs})
+        return {"result": 1, "data": {"activeId": "202"}}
+
+    monkeypatch.setattr(api, "_class_activity_json_request", request_json)
+
+    result = api.create_class_attendance(
+        COURSE,
+        CLAZZ,
+        title="课堂签到",
+        mode="code",
+        sign_code="2468",
+        start=False,
+    )
+
+    assert request["data"]["now"] == 0
+    assert request["data"]["planId"] == "1"
+    assert request["data"]["otherId"] == 5
+    assert request["data"]["signCode"] == "2468"
+    assert result["started"] is False
+
+    with pytest.raises(ChaoxingAPIError, match="4-8 digits"):
+        api.create_class_attendance(COURSE, CLAZZ, mode="code", sign_code="12")
+
+
+@pytest.mark.parametrize(
+    ("parameters", "message"),
+    [
+        ({"duration_minutes": 0}, "positive number"),
+        ({"late_minutes": 61}, "0 and 60"),
+        ({"mode": "qr", "qr_refresh_seconds": 12}, "0, 5, 8, 10, 20, or 30"),
+        (
+            {
+                "mode": "location",
+                "location_name": "教学楼",
+                "latitude": "34.2",
+                "longitude": "108.9",
+                "location_range_m": 2001,
+            },
+            "1 and 2000",
+        ),
+        (
+            {
+                "mode": "normal",
+                "location_name": "教学楼",
+                "latitude": "34.2",
+                "longitude": "108.9",
+            },
+            "use location mode",
+        ),
+    ],
+)
+def test_attendance_validates_current_form_limits(parameters, message) -> None:
+    api = ChaoxingAPI(Path("unused-cookies.json"))
+
+    with pytest.raises(ChaoxingAPIError, match=message):
+        api.create_class_attendance(COURSE, CLAZZ, **parameters)
+
+
 def test_group_safeguards_reject_default_nonempty_and_incomplete_order(monkeypatch) -> None:
     api = ChaoxingAPI(Path("unused-cookies.json"))
     context = {"common": {}}

@@ -84,11 +84,23 @@ ACTION_HINTS = {
     "notices.schedule": ("定时发送", "定时发送通知", "定时发送课程通知", "预约发布"),
     "resources.file.upload": ("上传资料", "上传课程资料", "上传本地课件", "上传文件"),
     "course_assets.cloud_files.import": ("云盘导入课件", "从云盘导入", "导入课件"),
+    "course_assets.file.upload": (
+        "上传本地课件",
+        "上传本地教案",
+        "直接上传课件",
+        "本地文件上传教案",
+    ),
     "exams.submissions.list": ("考试提交", "待批考试", "未批考试", "主观题没批"),
     "question_bank.list": ("搜索题库", "题库搜索", "浏览题库", "查找题目"),
     "discussions.topic.read": ("讨论回复", "查看回复", "讨论内容"),
     "course.grades.list": ("班级成绩", "学生成绩", "成绩册", "导出成绩"),
     "class_activities.activity.start": ("开始活动", "启动活动", "开始签到", "启动签到"),
+    "class_activities.attendance.create": (
+        "发起签到",
+        "新建签到",
+        "创建签到",
+        "新的签到活动",
+    ),
 }
 
 
@@ -543,42 +555,10 @@ def _action_hint_score(query: str, action_id: str) -> tuple[int, list[str]]:
 
 
 def _known_intent_gap(
-    domain: str,
-    operation_terms: list[str],
-    keywords: list[str],
+    _domain: str,
+    _operation_terms: list[str],
+    _keywords: list[str],
 ) -> dict[str, Any] | None:
-    operation = _compact_search_text(" ".join(operation_terms))
-    objects = _compact_search_text(" ".join(keywords))
-    full = f"{operation}{objects}"
-    if (
-        domain == "class_activities"
-        and any(word in operation for word in ("发起", "创建", "新建"))
-        and "签到" in full
-    ):
-        return {
-            "code": "class_attendance_create_not_implemented",
-            "message": "当前运行时可以读取、开始或结束已有班级活动，但尚未实现新建签到活动。",
-            "available_alternatives": [
-                "class_activities.activities.list",
-                "class_activities.activity.start",
-            ],
-        }
-    if (
-        domain == "course_assets"
-        and "上传" in operation
-        and any(word in objects for word in ("本地", "电脑", "桌面"))
-    ):
-        return {
-            "code": "local_course_asset_upload_not_implemented",
-            "message": (
-                "当前运行时只支持从个人云盘导入课件或教案；"
-                "本地文件可以上传到课程资料，但尚不能直接上传到课件或教案栏目。"
-            ),
-            "available_alternatives": [
-                "resources.file.upload",
-                "course_assets.cloud_files.import",
-            ],
-        }
     return None
 
 

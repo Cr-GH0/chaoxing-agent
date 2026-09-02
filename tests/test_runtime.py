@@ -1354,3 +1354,85 @@ async def test_runtime_dispatches_class_activity_filters_and_confirmed_start(mon
     assert preview["status"] == "confirmation_required"
     assert confirmed["status"] == "ok"
     assert api.started is not None and api.started["started"] is True
+
+
+@pytest.mark.asyncio
+async def test_runtime_dispatches_confirmed_attendance_and_local_plan_upload(monkeypatch) -> None:
+    class AttendanceAndAssetAPI:
+        def __init__(self) -> None:
+            self.attendance: dict[str, object] | None = None
+            self.upload: dict[str, object] | None = None
+
+        @staticmethod
+        def get_course(_query):
+            return {
+                "course_id": "900000002",
+                "course_name": "文体写作示例",
+                "classes": [{"clazz_id": "800000002", "clazz_name": "示例一班"}],
+            }
+
+        def create_class_attendance(self, course, clazz, **kwargs):
+            self.attendance = {
+                "course": course["course_id"],
+                "clazz": clazz["clazz_id"],
+                **kwargs,
+            }
+            return {"activity": {"activity_id": "attendance-1", "status": 1}}
+
+        def upload_file_to_course_assets(self, course, clazz, kind, file_path, **kwargs):
+            self.upload = {
+                "course": course["course_id"],
+                "clazz": clazz["clazz_id"],
+                "kind": kind,
+                "file_path": file_path,
+                **kwargs,
+            }
+            return {"asset": {"asset_id": "plan-1"}}
+
+    runtime = ActionRuntime(Settings(cookie_file=Path("session.json"), request_timeout=20.0))
+    api = AttendanceAndAssetAPI()
+    monkeypatch.setattr(runtime, "_api", lambda: api)
+
+    attendance_parameters = {
+        "course": "900000002",
+        "clazz": "800000002",
+        "mode": "qr",
+        "duration_minutes": "15",
+        "qr_refresh_seconds": "10",
+        "require_photo": "true",
+        "manual_end": "false",
+        "start": "false",
+    }
+    attendance_preview = await runtime.execute(
+        "class_activities.attendance.create", attendance_parameters
+    )
+    assert "保存为未开始活动" in attendance_preview["confirmation"]["summary"]
+    attendance = await runtime.execute(
+        "class_activities.attendance.create",
+        attendance_parameters,
+        attendance_preview["confirmation"]["token"],
+    )
+    upload_parameters = {
+        "course": "900000002",
+        "clazz": "800000002",
+        "kind": "teaching_plan",
+        "file_path": r"C:\教案\第二单元.docx",
+        "destination": "第二单元",
+    }
+    upload_preview = await runtime.execute("course_assets.file.upload", upload_parameters)
+    uploaded = await runtime.execute(
+        "course_assets.file.upload",
+        upload_parameters,
+        upload_preview["confirmation"]["token"],
+    )
+
+    assert attendance["status"] == "ok"
+    assert api.attendance is not None
+    assert api.attendance["duration_minutes"] == 15
+    assert api.attendance["qr_refresh_seconds"] == 10
+    assert api.attendance["require_photo"] is True
+    assert api.attendance["manual_end"] is False
+    assert api.attendance["start"] is False
+    assert uploaded["status"] == "ok"
+    assert api.upload is not None and api.upload["kind"] == "teaching_plan"
+    assert api.upload["destination"] == "第二单元"

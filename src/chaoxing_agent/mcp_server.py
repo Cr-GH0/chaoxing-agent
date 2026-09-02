@@ -5567,6 +5567,55 @@ async def chaoxing_reorder_class_activity_groups(
 
 
 @mcp.tool()
+async def chaoxing_create_class_attendance(
+    course: str,
+    clazz: str | None = None,
+    title: str = "",
+    mode: str = "normal",
+    duration_minutes: int = 30,
+    manual_end: bool = False,
+    late_minutes: int = 10,
+    require_photo: bool = False,
+    qr_refresh_seconds: int = 0,
+    sign_code: str = "",
+    gesture_code: str = "",
+    location_name: str = "",
+    latitude: str = "",
+    longitude: str = "",
+    location_range_m: int = 500,
+    start: bool = True,
+    group: str = "",
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm creating a normal, gesture, location, QR, or code attendance."""
+    parameters: dict[str, Any] = {
+        "course": course,
+        "title": title,
+        "mode": mode,
+        "duration_minutes": duration_minutes,
+        "manual_end": manual_end,
+        "late_minutes": late_minutes,
+        "require_photo": require_photo,
+        "qr_refresh_seconds": qr_refresh_seconds,
+        "sign_code": sign_code,
+        "gesture_code": gesture_code,
+        "location_name": location_name,
+        "latitude": latitude,
+        "longitude": longitude,
+        "location_range_m": location_range_m,
+        "start": start,
+        "group": group,
+    }
+    if clazz:
+        parameters["clazz"] = clazz
+    return await runtime.execute(
+        "class_activities.attendance.create",
+        parameters,
+        confirmation_token=confirmation_token,
+    )
+
+
+@mcp.tool()
 async def chaoxing_list_class_activities(
     course: str,
     clazz: str | None = None,
@@ -5807,6 +5856,33 @@ async def chaoxing_import_cloud_files_to_course_assets(
         parameters["clazz"] = clazz
     return await runtime.execute(
         "course_assets.cloud_files.import",
+        parameters,
+        confirmation_token=confirmation_token,
+    )
+
+
+@mcp.tool()
+async def chaoxing_upload_file_to_course_assets(
+    course: str,
+    kind: str,
+    file_path: str,
+    clazz: str | None = None,
+    destination: str = "",
+    name: str = "",
+    confirmation_token: str | None = None,
+) -> dict[str, Any]:
+    """Preview or confirm uploading a local file directly into courseware or plans."""
+    parameters = {
+        "course": course,
+        "kind": kind,
+        "file_path": file_path,
+        "destination": destination,
+        "name": name,
+    }
+    if clazz:
+        parameters["clazz"] = clazz
+    return await runtime.execute(
+        "course_assets.file.upload",
         parameters,
         confirmation_token=confirmation_token,
     )

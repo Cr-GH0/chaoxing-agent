@@ -836,6 +836,14 @@ async def test_new_resource_and_cloud_publish_or_delete_actions_require_confirma
             },
         ),
         (
+            "course_assets.file.upload",
+            {
+                "course": "课程",
+                "kind": "teaching_plan",
+                "file_path": r"C:\教案\第二单元.docx",
+            },
+        ),
+        (
             "course_assets.item.copy",
             {"course": "课程", "kind": "courseware", "asset": "Slides"},
         ),
@@ -1074,6 +1082,11 @@ async def test_class_activity_publish_and_delete_actions_require_confirmation() 
             "class_activities.activity.start",
             {"course": "课程", "activity": "第一节课签到"},
             "学生将可以参与",
+        ),
+        (
+            "class_activities.attendance.create",
+            {"course": "课程", "title": "课堂签到", "duration_minutes": 10},
+            "课堂签到",
         ),
         (
             "class_activities.activity.end",

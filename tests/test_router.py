@@ -489,6 +489,24 @@ def test_route_class_activity_details_move_lifecycle_and_recycle() -> None:
     assert permanent.parameters["activities"] == ["签到一", "签到二"]
 
 
+def test_route_new_attendance_with_common_settings() -> None:
+    plan = route_command(
+        "在课程《文体写作示例》班级《示例一班》发起15分钟二维码签到，"
+        "标题《课堂签到》，二维码10秒刷新，要求参与人拍照"
+    )
+
+    assert plan.action == "class_activities.attendance.create"
+    assert plan.missing_fields == []
+    assert plan.parameters["course"] == "文体写作示例"
+    assert plan.parameters["clazz"] == "示例一班"
+    assert plan.parameters["title"] == "课堂签到"
+    assert plan.parameters["mode"] == "qr"
+    assert plan.parameters["duration_minutes"] == 15
+    assert plan.parameters["qr_refresh_seconds"] == 10
+    assert plan.parameters["require_photo"] is True
+    assert plan.parameters["start"] is True
+
+
 def test_route_course_list() -> None:
     plan = route_command("列出我教的课")
     assert plan.action == "courses.list_teaching"
@@ -2013,6 +2031,15 @@ def test_route_courseware_and_teaching_plan_operations() -> None:
     tree = route_command("查看《文体写作示例》的完整教案目录树")
     folder = route_command("在《文体写作示例》的课件目录《Unit 1》新建文件夹《Review》")
     cloud_import = route_command("将《文体写作示例》的云盘文件《Week 2.pdf》导入课件")
+    local_upload = route_command(
+        r"把《文体写作示例》的本地文件《C:\教案\Unit 2.docx》上传到教案目录《第二单元》"
+    )
+    path_first_upload = route_command(
+        r"把《C:\教案\Unit 3.docx》上传到《文体写作示例》的教案目录《第三单元》"
+    )
+    unquoted_path_upload = route_command(
+        r"把 C:\教案\Unit 4.docx 上传到《文体写作示例》的教案"
+    )
     rename = route_command("把《文体写作示例》的教案《Week 1》重命名为《Week One》")
     top = route_command("置顶《文体写作示例》的课件《Slides》")
     move = route_command("把《文体写作示例》的课件《Slides》《Guide》移动到《Archive》")
@@ -2030,6 +2057,21 @@ def test_route_courseware_and_teaching_plan_operations() -> None:
     assert folder.parameters["parent"] == "Unit 1"
     assert cloud_import.action == "course_assets.cloud_files.import"
     assert cloud_import.parameters["resources"] == ["Week 2.pdf"]
+    assert local_upload.action == "course_assets.file.upload"
+    assert local_upload.parameters["kind"] == "teaching_plan"
+    assert local_upload.parameters["file_path"].endswith("Unit 2.docx")
+    assert local_upload.parameters["destination"] == "第二单元"
+    assert path_first_upload.parameters == {
+        "kind": "teaching_plan",
+        "course": "文体写作示例",
+        "file_path": r"C:\教案\Unit 3.docx",
+        "destination": "第三单元",
+    }
+    assert unquoted_path_upload.parameters == {
+        "kind": "teaching_plan",
+        "course": "文体写作示例",
+        "file_path": r"C:\教案\Unit 4.docx",
+    }
     assert rename.action == "course_assets.item.rename"
     assert rename.parameters["name"] == "Week One"
     assert top.action == "course_assets.item.top_status.update"

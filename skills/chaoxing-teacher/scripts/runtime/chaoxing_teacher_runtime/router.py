@@ -189,6 +189,25 @@ def _extract_quoted(text: str) -> list[str]:
     ]
 
 
+def _looks_like_local_path(value: str) -> bool:
+    return bool(re.match(r"^(?:[A-Za-z]:[\\/]|\\\\|/)", str(value).strip()))
+
+
+def _extract_local_file_path(text: str) -> str:
+    quoted_path = next(
+        (value for value in _extract_quoted(text) if _looks_like_local_path(value)), ""
+    )
+    if quoted_path:
+        return quoted_path
+    match = re.search(
+        r"(?P<path>(?:[A-Za-z]:[\\/]|\\\\|/).+?\.[A-Za-z0-9]{1,16})"
+        r"(?=\s*(?:上传|传到|放到|，|,|$))",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return match.group("path").strip() if match else ""
+
+
 def _homework_question_type_from_text(text: str) -> str | None:
     aliases = (
         ("single_choice", ("单选题", "单选")),
@@ -1859,7 +1878,7 @@ def route_command(command: str) -> CommandPlan:
             message="请用书名号提供课程。" if required else "",
         )
 
-    if re.search(r"班级活动|课堂活动|活动分组|活动回收站", text):
+    if re.search(r"班级活动|课堂活动|活动分组|活动回收站|签到", text):
         quoted = _extract_quoted(text)
         base: dict[str, Any] = {"course": quoted[0]} if quoted else {}
         operands = quoted[1:]
@@ -1874,6 +1893,105 @@ def route_command(command: str) -> CommandPlan:
 
         def activity_missing(*keys: str) -> list[str]:
             return [key for key in keys if key not in base]
+
+        attendance_create_intent = "签到" in text and bool(
+            re.search(r"发起|新建|创建|添加|新增|来一个|开一个", text)
+            or re.search(r"保存.{0,8}(?:新|一个).{0,4}签到", text)
+        )
+        if attendance_create_intent:
+            mode = "normal"
+            for marker, value in (
+                ("签到码", "code"),
+                ("二维码", "qr"),
+                ("手势", "gesture"),
+                ("位置", "location"),
+                ("普通", "normal"),
+            ):
+                if marker in text:
+                    mode = value
+                    break
+            base["mode"] = mode
+            title_match = re.search(r"标题(?:为|是|：|:)?\s*[《“\"']([^》”\"']+)[》”\"']", text)
+            group_match = re.search(r"分组[《“\"']([^》”\"']+)[》”\"']", text)
+            if group_match:
+                base["group"] = group_match.group(1)
+                if group_match.group(1) in operands:
+                    operands.remove(group_match.group(1))
+            if title_match:
+                base["title"] = title_match.group(1)
+                if title_match.group(1) in operands:
+                    operands.remove(title_match.group(1))
+            elif operands:
+                base["title"] = operands[0]
+
+            duration_match = re.search(
+                r"(?:(\d+)\s*小时\s*)?(\d+)\s*分钟(?:的)?(?:普通|手势|位置|二维码|签到码)?签到",
+                text,
+            ) or re.search(
+                r"签到.{0,10}(?:持续|时长(?:为|是)?|共)\s*(?:(\d+)\s*小时\s*)?(\d+)\s*分钟",
+                text,
+            )
+            if duration_match:
+                base["duration_minutes"] = int(duration_match.group(1) or 0) * 60 + int(
+                    duration_match.group(2)
+                )
+            if "手动结束" in text:
+                base["manual_end"] = True
+            late_match = re.search(r"结束后\s*(\d+)\s*分钟", text) or re.search(
+                r"(\d+)\s*分钟(?:以|之)?内.{0,8}迟到", text
+            )
+            if late_match:
+                base["late_minutes"] = int(late_match.group(1))
+            if re.search(r"要求.{0,8}拍照|需要.{0,8}拍照|拍照签到", text):
+                base["require_photo"] = True
+            refresh_match = re.search(r"二维码\D{0,8}(\d+)\s*秒.{0,8}(?:更新|刷新)", text)
+            if refresh_match:
+                base["qr_refresh_seconds"] = int(refresh_match.group(1))
+            code_match = re.search(r"签到码(?:为|是|：|:)?\s*(\d{4,8})", text)
+            if code_match:
+                base["sign_code"] = code_match.group(1)
+            gesture_match = re.search(r"手势(?:码|路径)?(?:为|是|：|:)?\s*([0-9]{4,})", text)
+            if gesture_match:
+                base["gesture_code"] = gesture_match.group(1)
+            location_match = re.search(
+                r"地点(?:为|是|：|:)?\s*[《“\"']([^》”\"']+)[》”\"']", text
+            )
+            if location_match:
+                base["location_name"] = location_match.group(1)
+            latitude_match = re.search(r"纬度(?:为|是|：|:)?\s*(-?\d+(?:\.\d+)?)", text)
+            longitude_match = re.search(r"经度(?:为|是|：|:)?\s*(-?\d+(?:\.\d+)?)", text)
+            range_match = re.search(r"(?:范围|半径)(?:为|是|：|:)?\s*(\d+)\s*米", text)
+            if latitude_match:
+                base["latitude"] = latitude_match.group(1)
+            if longitude_match:
+                base["longitude"] = longitude_match.group(1)
+            if range_match:
+                base["location_range_m"] = int(range_match.group(1))
+            base["start"] = not bool(re.search(r"保存|草稿|暂不发放|稍后发放", text))
+            required = activity_missing("course")
+            if mode == "gesture" and "gesture_code" not in base:
+                required.append("gesture_code")
+            if mode == "code" and "sign_code" not in base:
+                required.append("sign_code")
+            if mode == "location":
+                required.extend(
+                    key
+                    for key in ("location_name", "latitude", "longitude")
+                    if key not in base
+                )
+            return CommandPlan(
+                text,
+                "class_activities.attendance.create",
+                parameters=base,
+                confidence=0.98 if not required else 0.74,
+                missing_fields=required,
+                message=(
+                    "请提供课程；手势签到还需手势路径，签到码签到还需 4-8 位数字，"
+                    "位置签到还需地点、纬度和经度。"
+                    if required
+                    else ""
+                ),
+            )
 
         if re.search(r"活动类型|可用类型|支持.{0,4}活动", text):
             required = activity_missing("course")
@@ -6971,6 +7089,33 @@ def route_command(command: str) -> CommandPlan:
     if course_asset_match:
         kind = "teaching_plan" if "教案" in course_asset_match.group(0) else "courseware"
         quoted = _extract_quoted(text)
+
+        if "云盘" not in text and re.search(r"上传|传到|放到", text):
+            parameters = {"kind": kind}
+            file_path = _extract_local_file_path(text)
+            non_path_operands = [value for value in quoted if not _looks_like_local_path(value)]
+            if non_path_operands:
+                parameters["course"] = non_path_operands[0]
+            if file_path:
+                parameters["file_path"] = file_path
+            elif len(non_path_operands) > 1:
+                parameters["file_path"] = non_path_operands[1]
+            if len(non_path_operands) > 1 and re.search(r"目录|文件夹", text):
+                parameters["destination"] = non_path_operands[-1]
+            name_match = re.search(r"名称(?:为|是|：|:)?\s*[《“\"']([^》”\"']+)[》”\"']", text)
+            if name_match:
+                parameters["name"] = name_match.group(1)
+            missing = [key for key in ("course", "file_path") if key not in parameters]
+            return CommandPlan(
+                text,
+                "course_assets.file.upload",
+                parameters=parameters,
+                confidence=0.98 if not missing else 0.65,
+                missing_fields=missing,
+                message="请依次给出课程和本地文件完整路径；需要时再给出目标目录。"
+                if missing
+                else "",
+            )
 
         if "回收站" in text and re.search(r"永久删除|彻底删除", text):
             parameters = {"kind": kind}
