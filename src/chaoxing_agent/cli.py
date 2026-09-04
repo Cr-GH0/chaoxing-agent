@@ -3630,6 +3630,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     homework_publish.add_argument("--randomize-questions", action="store_true")
     homework_publish.add_argument("--randomize-options", action="store_true")
+    homework_publish.add_argument(
+        "--ai-review",
+        dest="ai_review",
+        action="store_true",
+        help="enable AI review of subjective questions",
+    )
+    homework_publish.add_argument(
+        "--ai-auto-mark-score", dest="ai_auto_mark_score", action="store_true",
+        help="adopt the AI recommended score without teacher confirmation (implies --ai-review)",
+    )
     homework_publish.add_argument("--confirmation-token")
 
     homeworks = sub.add_parser("homeworks", help="list course homeworks through HTTP")
@@ -8274,6 +8284,8 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
             "show_correctness": args.show_correctness,
             "randomize_questions": args.randomize_questions,
             "randomize_options": args.randomize_options,
+            "ai_review": args.ai_review,
+            "ai_auto_mark_score": args.ai_auto_mark_score,
         }
         if args.clazz:
             params["clazz"] = args.clazz

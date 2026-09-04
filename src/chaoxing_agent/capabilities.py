@@ -5054,8 +5054,12 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         ActionRisk.PUBLISH,
         CapabilityState.IMPLEMENTED,
         "http_api",
-        description="将作业库中的题目型作业发放到一个或多个班级；执行前必须确认，并逐班回读核验。",
-        aliases=("发布作业库作业", "发放作业", "布置作业"),
+        description=(
+            "将作业库中的题目型作业发放到一个或多个班级；执行前必须确认，并逐班回读核验。"
+            "支持 ai_review（主观题 AI 批阅）与 ai_auto_mark_score"
+            "（无需教师确认自动采用 AI 分数）。"
+        ),
+        aliases=("发布作业库作业", "发放作业", "布置作业", "AI批阅发布作业"),
     ),
     ActionSpec(
         "homework.list",

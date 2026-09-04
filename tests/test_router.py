@@ -1135,6 +1135,36 @@ def test_route_publish_homework_from_library() -> None:
     assert plan.parameters["randomize_questions"] is True
 
 
+def test_route_publish_homework_with_ai_review_only() -> None:
+    plan = route_command(
+        "将《900000002》作业库中的《Process analysis》发放给《示例一班》，"
+        "截止时间 2026-09-10 23:59，主观题启用 AI 批阅"
+    )
+    assert plan.action == "homework.library.publish"
+    assert plan.parameters["ai_review"] is True
+    assert "ai_auto_mark_score" not in plan.parameters
+
+
+def test_route_publish_homework_with_ai_auto_mark_score() -> None:
+    plan = route_command(
+        "将《900000002》作业库中的《Process analysis》发放给《示例一班》，"
+        "截止时间 2026-09-10 23:59，主观题启用 AI 批阅且无需教师确认"
+    )
+    assert plan.action == "homework.library.publish"
+    assert plan.parameters["ai_review"] is True
+    assert plan.parameters["ai_auto_mark_score"] is True
+
+
+def test_route_publish_homework_ai_keywords() -> None:
+    plan = route_command(
+        "把《作业库》里的《Unit1 议论文练习2》发布到《示例一班》，截止 2026-09-11 12:00，"
+        "开启智能批阅并自动采用推荐分"
+    )
+    assert plan.action == "homework.library.publish"
+    assert plan.parameters["ai_review"] is True
+    assert plan.parameters["ai_auto_mark_score"] is True
+
+
 def test_route_course_grades_command() -> None:
     plan = route_command("按成绩降序查看《文体写作示例》《英语2401》的学生成绩")
     assert plan.action == "course.grades.list"

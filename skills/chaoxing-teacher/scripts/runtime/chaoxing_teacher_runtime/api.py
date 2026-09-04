@@ -42003,6 +42003,8 @@ class ChaoxingAPI:
         show_correctness: bool = True,
         randomize_questions: bool = False,
         randomize_options: bool = False,
+        ai_review: bool = False,
+        ai_auto_mark_score: bool = False,
     ) -> dict[str, Any]:
         library = self.list_homework_library(course, clazz, search=homework_query)
         homework = resolve_homework_library_item(library["items"], homework_query)
@@ -42018,6 +42020,9 @@ class ChaoxingAPI:
             raise ChaoxingAPIError("passing_score must be between 0 and 100")
         if not 0 <= redo_times <= 100:
             raise ChaoxingAPIError("redo_times must be between 0 and 100")
+        # AI auto-marking is a sub-option of AI review: enabling it implies AI review.
+        if ai_auto_mark_score:
+            ai_review = True
 
         selected_classes: list[dict[str, Any]] = []
         for selector in target_classes or [str(clazz["clazz_id"])]:
@@ -42181,8 +42186,8 @@ class ChaoxingAPI:
             "redoDifferLibrary": 0,
             "saveAsTemplate": 0,
             "selfMark": 0,
-            "aiReview": 0,
-            "aiAutoMarkScore": 0,
+            "aiReview": int(ai_review),
+            "aiAutoMarkScore": int(ai_auto_mark_score),
             "answerAfterEndDeadline": normalized_deadline,
             "prohibitViewWork": 0,
             "notShowTeacherComment": 0,
@@ -42240,6 +42245,8 @@ class ChaoxingAPI:
                 "show_correctness": show_correctness,
                 "randomize_questions": randomize_questions,
                 "randomize_options": randomize_options,
+                "ai_review": ai_review,
+                "ai_auto_mark_score": ai_auto_mark_score,
             },
             "published": published,
             "server_message": str(payload.get("msg") or ""),

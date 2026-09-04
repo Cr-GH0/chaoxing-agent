@@ -7226,9 +7226,15 @@ async def chaoxing_publish_homework_from_library(
     show_correctness: bool = True,
     randomize_questions: bool = False,
     randomize_options: bool = False,
+    ai_review: bool = False,
+    ai_auto_mark_score: bool = False,
     confirmation_token: str | None = None,
 ) -> dict[str, Any]:
-    """Preview or confirm publishing one homework-library item to selected classes."""
+    """Preview or confirm publishing one homework-library item to selected classes.
+
+    ai_review turns on AI grading for subjective questions; ai_auto_mark_score
+    auto-accepts the AI-recommended score (implies ai_review).
+    """
     parameters: dict[str, Any] = {
         "course": course,
         "homework": homework,
@@ -7243,6 +7249,8 @@ async def chaoxing_publish_homework_from_library(
         "show_correctness": show_correctness,
         "randomize_questions": randomize_questions,
         "randomize_options": randomize_options,
+        "ai_review": ai_review,
+        "ai_auto_mark_score": ai_auto_mark_score,
     }
     if clazz:
         parameters["clazz"] = clazz

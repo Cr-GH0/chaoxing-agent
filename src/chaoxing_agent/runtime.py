@@ -3753,6 +3753,11 @@ class ActionRuntime:
                     parameters.get("randomize_options", False),
                     "randomize_options",
                 ),
+                ai_review=self._boolean(parameters.get("ai_review", False), "ai_review"),
+                ai_auto_mark_score=self._boolean(
+                    parameters.get("ai_auto_mark_score", False),
+                    "ai_auto_mark_score",
+                ),
             )
         if action in {"homework.list", "homework.list_ungraded"}:
             api = self._api()
@@ -5930,10 +5935,16 @@ class ActionRuntime:
             )
         if action == "homework.library.publish":
             target = parameters.get("target_classes") or parameters.get("clazz") or "当前班级"
+            ai_suffix = ""
+            if parameters.get("ai_review"):
+                ai_suffix = "，主观题启用 AI 批阅"
+                if parameters.get("ai_auto_mark_score"):
+                    ai_suffix += "且自动采用推荐分（无需教师确认）"
             return (
                 f"将课程 {parameters.get('course')} 作业库中的《{parameters.get('homework')}》"
                 f"发放到班级 {target}；"
                 f"开始={parameters.get('start_time', 'now')}，结束={parameters.get('end_time', '')}"
+                f"{ai_suffix}"
             )
         if action == "course.study_monitor.remind":
             return (

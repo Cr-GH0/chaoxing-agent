@@ -6899,7 +6899,7 @@ def route_command(command: str) -> CommandPlan:
             message="请给出课程名称或课程 ID。" if missing else "",
         )
 
-    if re.search(r"作业库.*(?:发放|发布|布置)|(?:发放|发布|布置).*作业", text):
+    if re.search(r"作业库.*(?:发放|发布|布置|发给|发到)|(?:发放|发布|布置|发给|发到).*作业", text):
         parameters: dict[str, object] = {}
         if quoted:
             parameters["course"] = quoted[0]
@@ -6936,6 +6936,13 @@ def route_command(command: str) -> CommandPlan:
             parameters["randomize_questions"] = True
         if re.search(r"选项乱序|随机选项", text):
             parameters["randomize_options"] = True
+        if re.search(r"AI\s*批阅|智能批阅|人工智能批阅|主观题\s*(?:设置|启用|开启)?\s*AI", text):
+            parameters["ai_review"] = True
+            if re.search(
+                r"无需教师确认|无需人工确认|自动采用|自动批阅|自动评分|自动生效|免确认|不用.*确认",
+                text,
+            ):
+                parameters["ai_auto_mark_score"] = True
         missing = [key for key in ("course", "homework") if key not in parameters]
         return CommandPlan(
             text,
