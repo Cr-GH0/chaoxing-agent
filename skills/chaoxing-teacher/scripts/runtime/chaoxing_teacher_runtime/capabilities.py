@@ -5112,6 +5112,17 @@ IMPLEMENTED_ACTIONS: tuple[ActionSpec, ...] = (
         aliases=("给分", "提交分数", "评分"),
     ),
     ActionSpec(
+        "homework.draft.save_to_library",
+        "保存作业草稿到作业库",
+        "homework",
+        ActionRisk.DRAFT,
+        CapabilityState.IMPLEMENTED,
+        "http_api",
+        live_verified=True,
+        description="把作业草稿保存并移入作业库（草稿箱不再显示该草稿），保存后回读作业库核验。",
+        aliases=("保存草稿到作业库", "草稿转作业库", "存入作业库"),
+    ),
+    ActionSpec(
         "notices.list",
         "列出课程通知",
         "notices",

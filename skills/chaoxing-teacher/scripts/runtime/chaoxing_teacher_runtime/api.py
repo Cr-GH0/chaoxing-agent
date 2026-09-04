@@ -41088,6 +41088,63 @@ class ChaoxingAPI:
             "verification": "the deleted draft is absent from a fresh HTTP draft listing",
         }
 
+    def save_homework_draft_to_library(
+        self,
+        course: dict[str, Any],
+        clazz: dict[str, Any],
+        draft_query: str,
+    ) -> dict[str, Any]:
+        before = self.list_homework_drafts(course, clazz)
+        draft = resolve_homework_draft(before["drafts"], draft_query)
+        session = self._session()
+        try:
+            response = session.get(
+                MOOC2_BASE_URL + "/mooc2-ans/work/library/work-update",
+                params={
+                    "courseid": course["course_id"],
+                    "workid": draft["work_id"],
+                    "cpi": course["cpi"],
+                    "status": "0",
+                },
+                timeout=self.timeout,
+                headers={"Referer": draft["edit_url"], "X-Requested-With": "XMLHttpRequest"},
+            )
+            response.raise_for_status()
+            payload = json.loads(self._decode(response))
+        except (requests.RequestException, json.JSONDecodeError) as exc:
+            raise ChaoxingAPIError(f"homework draft save-to-library failed: {exc}") from exc
+        if not isinstance(payload, dict) or not payload.get("status"):
+            message = payload.get("msg") if isinstance(payload, dict) else ""
+            raise ChaoxingAPIError(
+                str(message or "homework draft save-to-library was not acknowledged")
+            )
+        library = self.list_homework_library(course, clazz, search=draft["title"])
+        library_item = [
+            item
+            for item in library["items"]
+            if str(item.get("item_id")) == str(draft["work_id"])
+        ]
+        after = self.list_homework_drafts(course, clazz)
+        still_in_drafts = any(
+            str(item["work_id"]) == str(draft["work_id"]) for item in after["drafts"]
+        )
+        if len(library_item) != 1:
+            raise ChaoxingAPIError(
+                "server acknowledged homework draft save-to-library, but the saved work "
+                "did not appear exactly once in the homework library"
+            )
+        return {
+            "course_id": course["course_id"],
+            "course_name": course["course_name"],
+            "clazz_id": clazz["clazz_id"],
+            "clazz_name": clazz["clazz_name"],
+            "draft": draft,
+            "library_item": library_item[0],
+            "still_in_drafts": still_in_drafts,
+            "server_message": str(payload.get("msg") or ""),
+            "verification": "the saved work appears in a fresh homework-library listing",
+        }
+
     def _resolve_editable_homework(
         self,
         course: dict[str, Any],

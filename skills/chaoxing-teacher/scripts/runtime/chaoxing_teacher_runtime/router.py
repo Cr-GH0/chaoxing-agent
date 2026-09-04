@@ -6794,6 +6794,24 @@ def route_command(command: str) -> CommandPlan:
             message="请依次给出课程以及作业库作业或草稿。" if missing else "",
         )
 
+    if "作业草稿" in text and re.search(
+        r"保存到作业库|存入作业库|转作业库|转存作业库|放入作业库|归档到作业库", text
+    ):
+        parameters: dict[str, str] = {}
+        if quoted:
+            parameters["course"] = quoted[0]
+        if len(quoted) >= 2:
+            parameters["draft"] = quoted[1]
+        missing = [key for key in ("course", "draft") if key not in parameters]
+        return CommandPlan(
+            text,
+            "homework.draft.save_to_library",
+            parameters=parameters,
+            confidence=0.96 if not missing else 0.66,
+            missing_fields=missing,
+            message="请依次给出课程和要保存到作业库的作业草稿标题或 ID。" if missing else "",
+        )
+
     if "作业草稿" in text and re.search(r"改名|重命名|修改标题", text):
         parameters: dict[str, str] = {}
         if quoted:
