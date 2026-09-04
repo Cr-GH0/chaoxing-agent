@@ -3603,6 +3603,13 @@ def build_parser() -> argparse.ArgumentParser:
     homework_draft_delete.add_argument("--class", dest="clazz")
     homework_draft_delete.add_argument("--confirmation-token")
 
+    homework_draft_to_library = sub.add_parser(
+        "homework-draft-to-library", help="save a homework draft into the reusable library"
+    )
+    homework_draft_to_library.add_argument("course")
+    homework_draft_to_library.add_argument("draft")
+    homework_draft_to_library.add_argument("--class", dest="clazz")
+
     homework_publish = sub.add_parser(
         "homework-publish", help="preview or confirm publishing a homework-library item"
     )
@@ -8247,6 +8254,11 @@ async def _run_action(args: argparse.Namespace, runtime: ActionRuntime) -> dict[
             params,
             confirmation_token=args.confirmation_token,
         )
+    if args.command == "homework-draft-to-library":
+        params = {"course": args.course, "draft": args.draft}
+        if args.clazz:
+            params["clazz"] = args.clazz
+        return await runtime.execute("homework.draft.save_to_library", params)
     if args.command == "homework-publish":
         params = {
             "course": args.course,

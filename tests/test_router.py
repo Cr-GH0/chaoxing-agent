@@ -741,6 +741,9 @@ def test_route_homework_library_and_draft_commands() -> None:
     create = route_command("在《900000002》中创建作业草稿《Unit 1 draft》")
     update = route_command("将《900000002》的作业草稿《Unit 1 draft》改名为《Unit 1 homework》")
     delete = route_command("删除《900000002》的作业草稿《Unit 1 homework》")
+    save_to_library = route_command(
+        "把《900000002》的作业草稿《Unit 1 homework》保存到作业库"
+    )
     assert library.action == "homework.library.list"
     assert drafts.action == "homework.drafts.list"
     assert create.action == "homework.draft.create"
@@ -749,6 +752,12 @@ def test_route_homework_library_and_draft_commands() -> None:
     assert update.parameters["title"] == "Unit 1 homework"
     assert delete.action == "homework.draft.delete"
     assert delete.parameters["draft"] == "Unit 1 homework"
+    assert save_to_library.action == "homework.draft.save_to_library"
+    assert save_to_library.parameters == {
+        "course": "900000002",
+        "draft": "Unit 1 homework",
+    }
+    assert not save_to_library.missing_fields
 
 
 def test_route_homework_question_commands() -> None:

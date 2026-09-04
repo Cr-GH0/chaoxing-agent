@@ -389,7 +389,8 @@ def test_report_keeps_observed_separate_from_implemented() -> None:
     report = capability_report()
     counts = report["summary"]["by_state"]
     assert counts["observed"] == 43
-    assert counts["implemented"] == 565
+    assert counts["implemented"] == 566
+    assert counts["implemented"] == 566
 
 
 def test_surface_coverage_links_navigation_markers_to_semantic_domains() -> None:
